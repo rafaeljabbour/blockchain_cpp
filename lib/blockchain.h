@@ -1,5 +1,5 @@
-#ifndef __BLOCKCHAIN_H
-#define __BLOCKCHAIN_H
+#ifndef BLOCKCHAIN_H
+#define BLOCKCHAIN_H
 
 #include <cstdint>
 #include <string>
