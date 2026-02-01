@@ -1,6 +1,9 @@
 #include "blockchain.h"
-#include <iomanip>
+#include "proofOfWork.h"
+
 #include <iostream>
+#include <cstdio>
+#include <ctime>  
 
 int main() {
     Blockchain bc;
@@ -17,6 +20,9 @@ int main() {
         for (uint8_t b : block.GetData()) std::cout << (char)b;
         std::cout << "\nHash: ";
         for (uint8_t b : block.GetHash()) printf("%02x", b);
+
+        ProofOfWork proofOfWork(&block);
+        std::cout << "\nValid: " << (proofOfWork.Validate() ? "true" : "false");
         std::cout << "\n\n";
     }
     return 0;
