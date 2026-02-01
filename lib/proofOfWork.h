@@ -1,19 +1,21 @@
 #ifndef PROOF_OF_WORK_H
 #define PROOF_OF_WORK_H
 
-#include "block.h"
 #include <openssl/bn.h>
-#include <vector>
+
 #include <cstdint>
 #include <utility>
+#include <vector>
+
+#include "block.h"
 
 const int32_t targetBits = 17;
-const int32_t maxNonce  = INT32_MAX;
+const int32_t maxNonce = INT32_MAX;
 
 class ProofOfWork {
     private:
         const Block* block;
-        BIGNUM* target; // upperbound for valid hash value
+        BIGNUM* target;  // upperbound for valid hash value
 
     public:
         ProofOfWork(const Block* block);

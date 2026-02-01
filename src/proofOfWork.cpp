@@ -1,9 +1,11 @@
 #include "proofOfWork.h"
-#include "utils.h"
+
+#include <openssl/bn.h>
+#include <openssl/sha.h>
 
 #include <iostream>
-#include <openssl/bn.h>
-#include <openssl/sha.h>  
+
+#include "utils.h"
 
 ProofOfWork::ProofOfWork(const Block* block) {
     target = BN_new();
@@ -12,14 +14,13 @@ ProofOfWork::ProofOfWork(const Block* block) {
     this->block = block;
 }
 
-ProofOfWork::~ProofOfWork() {
-    BN_free(target);
-}
+ProofOfWork::~ProofOfWork() { BN_free(target); }
 
 std::vector<uint8_t> ProofOfWork::PrepareData(int nonce) {
     std::vector<uint8_t> data;
 
-    data.insert(data.end(), block->GetPreviousHash().begin(), block->GetPreviousHash().end());
+    data.insert(data.end(), block->GetPreviousHash().begin(),
+                block->GetPreviousHash().end());
     data.insert(data.end(), block->GetData().begin(), block->GetData().end());
 
     std::string timestampString = IntToHexString(block->GetTimestamp());
@@ -37,8 +38,9 @@ std::pair<int32_t, std::vector<uint8_t>> ProofOfWork::Run() {
     BIGNUM* hashInt = BN_new();
     std::vector<uint8_t> hash;
     int32_t nonce = 0;
-    
-    std::cout << "Mining the block: " << ByteArrayToString(block->GetData()) << std::endl;
+
+    std::cout << "Mining the block: " << ByteArrayToString(block->GetData())
+              << std::endl;
 
     while (nonce < maxNonce) {
         std::vector<uint8_t> data = PrepareData(nonce);
@@ -50,7 +52,7 @@ std::pair<int32_t, std::vector<uint8_t>> ProofOfWork::Run() {
         std::cout << "\r" << ByteArrayToHexString(hash) << std::flush;
 
         BN_bin2bn(hash.data(), hash.size(), hashInt);
-        
+
         if (BN_cmp(hashInt, target) == -1) {
             break;
         } else {

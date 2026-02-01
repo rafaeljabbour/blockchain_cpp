@@ -1,11 +1,12 @@
 #ifndef CLI_H
 #define CLI_H
 
-#include "blockchain.h"
 #include <string>
 
-class CLI{
-    private: 
+#include "blockchain.h"
+
+class CLI {
+    private:
         Blockchain* bc;
 
         void printUsage();

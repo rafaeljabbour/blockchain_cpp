@@ -1,8 +1,7 @@
 #include "utils.h"
-#include <sstream>
+
 #include <iomanip>
-
-
+#include <sstream>
 
 std::string IntToHexString(int64_t num) {
     std::stringstream ss;
@@ -22,6 +21,7 @@ std::string ByteArrayToString(const std::vector<uint8_t>& bytes) {
     return std::string(bytes.begin(), bytes.end());
 }
 
-leveldb::Slice ByteArrayToSlice(const std::vector<uint8_t>& bytes){
-    return leveldb::Slice(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+leveldb::Slice ByteArrayToSlice(const std::vector<uint8_t>& bytes) {
+    return leveldb::Slice(reinterpret_cast<const char*>(bytes.data()),
+                          bytes.size());
 }

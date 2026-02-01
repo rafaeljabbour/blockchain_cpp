@@ -1,32 +1,40 @@
 #include "blockchainIterator.h"
+
+#include <cerrno>
+#include <iostream>
+#include <vector>
+
 #include "block.h"
 #include "utils.h"
-#include <cerrno>
-#include <vector>
-#include <iostream>
 
-BlockchainIterator::BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db) : currentHash(tip), db(db) {};
+BlockchainIterator::BlockchainIterator(std::vector<uint8_t> tip,
+                                       leveldb::DB* db)
+    : currentHash(tip), db(db) {};
 
-Block BlockchainIterator::Next(){
+Block BlockchainIterator::Next() {
     std::string serializedBlock;
 
-    leveldb::Status status = db->Get(leveldb::ReadOptions(), ByteArrayToSlice(currentHash), &serializedBlock);
+    leveldb::Status status =
+        db->Get(leveldb::ReadOptions(), ByteArrayToSlice(currentHash),
+                &serializedBlock);
     if (!status.ok()) {
         if (!status.ok()) {
-            std::cerr << "Error reading block: " << status.ToString() << std::endl;
+            std::cerr << "Error reading block: " << status.ToString()
+                      << std::endl;
             throw std::runtime_error("Failed to read block from database");
-        }    }
+        }
+    }
 
     std::vector<uint8_t> data(serializedBlock.begin(), serializedBlock.end());
     Block block = Block::Deserialize(data);
 
     currentHash = block.GetPreviousHash();
     return block;
-} 
+}
 
-bool BlockchainIterator::hasNext() const{
-    for(uint8_t byte: currentHash){
-        if(byte != 0) return true;
+bool BlockchainIterator::hasNext() const {
+    for (uint8_t byte : currentHash) {
+        if (byte != 0) return true;
     }
     return false;
 }

@@ -1,14 +1,15 @@
 #ifndef BLOCKCHAINITERATOR_H
 #define BLOCKCHAINITERATOR_H
 
+#include <leveldb/db.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <leveldb/db.h>
 #include "block.h"
 
-class BlockchainIterator{
+class BlockchainIterator {
     private:
         std::vector<uint8_t> currentHash;
         leveldb::DB* db;
@@ -18,6 +19,5 @@ class BlockchainIterator{
         Block Next();
         bool hasNext() const;
 };
-
 
 #endif
