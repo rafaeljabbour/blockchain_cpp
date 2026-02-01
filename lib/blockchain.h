@@ -5,17 +5,20 @@
 #include <string>
 #include <vector>
 
+#include <leveldb/db.h>
 #include "block.h"
 
 class Blockchain {
   private:
-    std::vector<Block> blocks; // vector of blocks
+    std::vector<uint8_t> tip; // hash of the last block
+    leveldb::DB* db; // leveldb for storing blocks (persistency)
 
   public:
     Blockchain();
+    ~Blockchain();
     void AddBlock(const std::string &data);
 
-    const std::vector<Block>& GetBlocks() const { return blocks; }
+    const std::vector<int8_t>& GetTip() const { return tip; }
 
 };
 
