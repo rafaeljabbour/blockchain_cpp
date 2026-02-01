@@ -2,6 +2,8 @@
 build/
 .vscode/
 .clangd
+src/tmp/
+src/blockchain
 
 # Prerequisites
 *.d

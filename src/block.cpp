@@ -69,7 +69,7 @@ Block Block::Deserialize(const std::vector<uint8_t> &serialized) {
   offset += 32;
   block.nonce = 0;
   for (int i = 0; i < 4; i++) {
-    block.nonce |= static_cast<int32_t>(serialized[offset + i] << (8 * i));
+    block.nonce |= (static_cast<int32_t>(serialized[offset + i] << (8 * i)));
   }
   
     return block;

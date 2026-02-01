@@ -1,29 +1,10 @@
 #include "blockchain.h"
-#include "proofOfWork.h"
+#include "cli.h"
 
-#include <iostream>
-#include <cstdio>
-#include <ctime>  
-
-int main() {
+int main(int argc, char* argv[]) {
     Blockchain bc;
+    CLI cli(&bc);
+    cli.run(argc, argv);
 
-    bc.AddBlock("Send 1 BTC for you");
-    bc.AddBlock("Send 2 more BTC for you");
-
-    for (const auto& block : bc.GetBlocks()) {
-        std::cout << "Previous hash: ";
-        for (uint8_t b : block.GetPreviousHash()) printf("%02x", b);
-        std::time_t timestamp = block.GetTimestamp();
-        std::cout << "\nTimestamp: " << std::ctime(&timestamp);        
-        std::cout << "Data: ";
-        for (uint8_t b : block.GetData()) std::cout << (char)b;
-        std::cout << "\nHash: ";
-        for (uint8_t b : block.GetHash()) printf("%02x", b);
-
-        ProofOfWork proofOfWork(&block);
-        std::cout << "\nValid: " << (proofOfWork.Validate() ? "true" : "false");
-        std::cout << "\n\n";
-    }
     return 0;
 }

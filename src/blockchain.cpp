@@ -19,7 +19,7 @@ Blockchain::Blockchain() {
         tip = std::vector<uint8_t>(tipString.begin(), tipString.end());
     }
     else if (status.IsNotFound()) {
-        Block genesis("Genesis Block", std::vector<uint8_t>());
+        Block genesis("Genesis Block", std::vector<uint8_t>(32, 0));
 
         std::vector<uint8_t> genesisHash = genesis.GetHash();
         std::vector<uint8_t> serialized = genesis.Serialize();

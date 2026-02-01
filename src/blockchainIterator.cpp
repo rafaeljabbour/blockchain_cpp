@@ -5,6 +5,8 @@
 #include <vector>
 #include <iostream>
 
+BlockchainIterator::BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db) : currentHash(tip), db(db) {};
+
 Block BlockchainIterator::Next(){
     std::string serializedBlock;
 

@@ -14,7 +14,7 @@ class BlockchainIterator{
         leveldb::DB* db;
 
     public:
-        BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db) : currentHash(tip), db(db) {};
+        BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db);
         Block Next();
         bool hasNext() const;
 };
