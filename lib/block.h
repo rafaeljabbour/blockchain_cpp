@@ -15,11 +15,16 @@ class Block {
 
   public:
     Block(const std::string &data, const std::vector<uint8_t> &previousHash);
+    Block() = default;
+
     int64_t GetTimestamp() const { return timestamp; }
     const std::vector<uint8_t>& GetData() const { return data; }
     const std::vector<uint8_t>& GetPreviousHash() const { return previousHash; }
     const std::vector<uint8_t>& GetHash() const { return hash; }
     int32_t GetNonce() const { return nonce; }
+
+    std::vector<uint8_t> Serialize() const;
+    static Block Deserialize(const std::vector<uint8_t> &serialized);
 };
 
 #endif

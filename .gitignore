@@ -1,7 +1,7 @@
 # build directory
 build/
 .vscode/
-.clangd/
+.clangd
 
 # Prerequisites
 *.d
