@@ -23,7 +23,7 @@ std::vector<uint8_t> Block::Serialize() const {
 
   uint32_t dataSize = data.size();
   for (int i = 0; i < 4; i++) {
-    serialized.push_back((dataSize >> (i * 8)) & 0xFF);
+    serialized.push_back((dataSize >> (8 * i)) & 0xFF);
   }
   serialized.insert(serialized.end(), data.begin(), data.end());
 

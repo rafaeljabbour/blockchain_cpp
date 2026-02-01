@@ -1,7 +1,9 @@
 #include "blockchain.h"
+#include "blockchainIterator.h"
 #include "utils.h"
 
 #include <iostream>
+#include <leveldb/iterator.h>
 #include <leveldb/write_batch.h> // for atomic updates
 
 Blockchain::Blockchain() {
@@ -24,8 +26,8 @@ Blockchain::Blockchain() {
 
         leveldb::WriteBatch batch;
 
-        batch.Put(ByteArrayToString(genesisHash), ByteArrayToString(serialized));
-        batch.Put("l", ByteArrayToString(genesisHash));
+        batch.Put(ByteArrayToSlice(genesisHash), ByteArrayToSlice(serialized));
+        batch.Put("l", ByteArrayToSlice(genesisHash));
 
         status = db->Write(leveldb::WriteOptions(), &batch);
         assert(status.ok());
@@ -51,10 +53,18 @@ void Blockchain::AddBlock(const std::string &data) {
 
     leveldb::WriteBatch batch;
 
-    batch.Put(ByteArrayToString(newHash), ByteArrayToString(serialized));
-    batch.Put("l", ByteArrayToString(newHash));
+    batch.Put(ByteArrayToSlice(newHash), ByteArrayToSlice(serialized));
+    batch.Put("l", ByteArrayToSlice(newHash));
 
     leveldb::Status status = db->Write(leveldb::WriteOptions(), &batch);
     assert(status.ok());
     tip = newHash;
+}
+
+Blockchain::~Blockchain() {
+    delete db;
+}
+
+BlockchainIterator Blockchain::Iterator(){
+    return BlockchainIterator(tip, db);
 }

@@ -7,6 +7,7 @@
 
 #include <leveldb/db.h>
 #include "block.h"
+#include "blockchainIterator.h"
 
 class Blockchain {
   private:
@@ -18,8 +19,7 @@ class Blockchain {
     ~Blockchain();
     void AddBlock(const std::string &data);
 
-    const std::vector<int8_t>& GetTip() const { return tip; }
-
+    BlockchainIterator Iterator();
 };
 
 #endif
