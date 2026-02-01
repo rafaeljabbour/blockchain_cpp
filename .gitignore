@@ -1,7 +1,8 @@
-# build directory
-build/
 .vscode/
 .clangd
+.clang-format
+
+build/
 src/tmp/
 src/blockchain
 
