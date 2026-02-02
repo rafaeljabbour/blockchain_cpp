@@ -85,7 +85,7 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
 
     offset += 4;
     // each transaction
-    for (int i = 0; i < txCount; i++) {
+    for (uint32_t i = 0; i < txCount; i++) {
         // transaction size (4 bytes)
         uint32_t txSize = 0;
         for (int i = 0; i < 4; i++) {

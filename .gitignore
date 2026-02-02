@@ -1,9 +1,10 @@
 .vscode/
 .clangd
 .clang-format
+makefile
 
 build/
-src/tmp/
+tmp/
 src/blockchain
 
 # Prerequisites

@@ -7,14 +7,15 @@
 
 class CLI {
     private:
-        Blockchain* bc;
-
         void printUsage();
-        void addBlock(const std::string& data);
+
+        void createBlockchain(const std::string& address);
+        void getBalance(const std::string& address);
         void printChain();
+        void send(const std::string& from, const std::string& to, int amount);
 
     public:
-        CLI(Blockchain* blockchain);
+        CLI() = default;
         void run(int argc, char* argv[]);
 };
 

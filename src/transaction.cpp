@@ -1,9 +1,7 @@
 
 #include <openssl/sha.h>
 
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <vector>
 
 #include "blockchain.h"
