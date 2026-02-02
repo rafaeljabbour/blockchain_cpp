@@ -36,10 +36,8 @@ void CLI::run(int argc, char* argv[]) {
 
 void CLI::printUsage() {
     std::cout << "Usage:\n";
-    std::cout
-        << "\taddblock -data BLOCK_DATA - add a block to the blockchain\n";
-    std::cout
-        << "\tprintchain                - print all blocks in the blockchain\n";
+    std::cout << "\taddblock -data BLOCK_DATA - add a block to the blockchain\n";
+    std::cout << "\tprintchain                - print all blocks in the blockchain\n";
 }
 
 void CLI::addBlock(const std::string& data) {

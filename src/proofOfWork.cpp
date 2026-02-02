@@ -19,17 +19,24 @@ ProofOfWork::~ProofOfWork() { BN_free(target); }
 std::vector<uint8_t> ProofOfWork::PrepareData(int nonce) {
     std::vector<uint8_t> data;
 
-    data.insert(data.end(), block->GetPreviousHash().begin(),
-                block->GetPreviousHash().end());
-    data.insert(data.end(), block->GetData().begin(), block->GetData().end());
+    // previous block hash (32 bytes)
+    data.insert(data.end(), block->GetPreviousHash().begin(), block->GetPreviousHash().end());
 
-    std::string timestampString = IntToHexString(block->GetTimestamp());
-    std::string targetBitsString = IntToHexString(targetBits);
-    std::string nonceString = IntToHexString(nonce);
+    // hash of all transactions (32 bytes)
+    std::vector<uint8_t> txHashBytes = block->HashTransactions();
+    data.insert(data.end(), txHashBytes.begin(), txHashBytes.end());
 
-    data.insert(data.end(), timestampString.begin(), timestampString.end());
-    data.insert(data.end(), targetBitsString.begin(), targetBitsString.end());
-    data.insert(data.end(), nonceString.begin(), nonceString.end());
+    // timestamp (8 bytes)
+    std::vector<uint8_t> timestampBytes = IntToHexByteArray(block->GetTimestamp());
+    data.insert(data.end(), timestampBytes.begin(), timestampBytes.end());
+
+    // target bits (8 bytes)
+    std::vector<uint8_t> targetBitsBytes = IntToHexByteArray(targetBits);
+    data.insert(data.end(), targetBitsBytes.begin(), targetBitsBytes.end());
+
+    // nonce (8 bytes)
+    std::vector<uint8_t> nonceBytes = IntToHexByteArray(nonce);
+    data.insert(data.end(), nonceBytes.begin(), nonceBytes.end());
 
     return data;
 }
@@ -39,8 +46,7 @@ std::pair<int32_t, std::vector<uint8_t>> ProofOfWork::Run() {
     std::vector<uint8_t> hash;
     int32_t nonce = 0;
 
-    std::cout << "Mining the block: " << ByteArrayToString(block->GetData())
-              << std::endl;
+    std::cout << "Mining a new block: " << std::endl;
 
     while (nonce < maxNonce) {
         std::vector<uint8_t> data = PrepareData(nonce);

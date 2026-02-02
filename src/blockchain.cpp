@@ -34,8 +34,7 @@ Blockchain::Blockchain() {
         assert(status.ok());
         tip = genesisHash;
     } else {
-        std::cerr << "Error reading last hash: " << status.ToString()
-                  << std::endl;
+        std::cerr << "Error reading last hash: " << status.ToString() << std::endl;
         assert(false);
     }
 }
@@ -64,6 +63,4 @@ void Blockchain::AddBlock(const std::string& data) {
 
 Blockchain::~Blockchain() { delete db; }
 
-BlockchainIterator Blockchain::Iterator() {
-    return BlockchainIterator(tip, db);
-}
+BlockchainIterator Blockchain::Iterator() { return BlockchainIterator(tip, db); }
