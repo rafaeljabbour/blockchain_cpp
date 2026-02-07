@@ -2,7 +2,7 @@
 
 #include <openssl/bn.h>
 
-#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -50,7 +50,8 @@ std::vector<uint8_t> Base58Encode(const std::vector<uint8_t>& input) {
 
     return result;
 }
-std::vector<uint8_t> Base58Decode(const std::string& input) {
+
+std::vector<uint8_t> Base58Decode(const std::vector<uint8_t>& input) {
     BIGNUM* result = BN_new();
     BN_zero(result);
 
