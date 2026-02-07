@@ -5,7 +5,9 @@ makefile
 
 build/
 tmp/
+obj/
 src/blockchain
+
 
 # Prerequisites
 *.d
