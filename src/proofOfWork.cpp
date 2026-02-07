@@ -51,9 +51,7 @@ std::pair<int32_t, std::vector<uint8_t>> ProofOfWork::Run() {
     while (nonce < maxNonce) {
         std::vector<uint8_t> data = PrepareData(nonce);
 
-        uint8_t hashArray[SHA256_DIGEST_LENGTH];
-        SHA256(data.data(), data.size(), hashArray);
-        hash.assign(hashArray, hashArray + SHA256_DIGEST_LENGTH);
+        hash = SHA256Hash(data);
 
         std::cout << "\r" << ByteArrayToHexString(hash) << std::flush;
 
@@ -75,10 +73,9 @@ bool ProofOfWork::Validate() {
     BIGNUM* hashInt = BN_new();
     std::vector<uint8_t> data = PrepareData(block->GetNonce());
 
-    uint8_t hashArray[SHA256_DIGEST_LENGTH];
-    SHA256(data.data(), data.size(), hashArray);
+    std::vector<uint8_t> hash = SHA256Hash(data);
 
-    BN_bin2bn(hashArray, SHA256_DIGEST_LENGTH, hashInt);
+    BN_bin2bn(hash.data(), hash.size(), hashInt);
     bool isValid = (BN_cmp(hashInt, target) == -1);
 
     BN_free(hashInt);

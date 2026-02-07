@@ -1,6 +1,9 @@
 #include "utils.h"
 
+#include <openssl/evp.h>
+
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 std::string IntToHexString(int64_t num) {
@@ -60,4 +63,52 @@ std::vector<uint8_t> StringToBytes(const std::string& str) {
 
 std::string BytesToString(const std::vector<uint8_t>& bytes) {
     return std::string(bytes.begin(), bytes.end());
+}
+
+std::vector<uint8_t> SHA256Hash(const std::vector<uint8_t>& data) {
+    // Create context window to track hashing state
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        std::cerr << "Error: Failed to create SHA256 context" << std::endl;
+        exit(1);
+    }
+
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLen = 0;
+
+    // (init sha256, feed data into hash, complete and write has resul)
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) <= 0 ||
+        EVP_DigestUpdate(ctx, data.data(), data.size()) <= 0 ||
+        EVP_DigestFinal_ex(ctx, hash, &hashLen) <= 0) {
+        std::cerr << "Error: SHA256 hashing failed" << std::endl;
+        EVP_MD_CTX_free(ctx);
+        exit(1);
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return std::vector<uint8_t>(hash, hash + hashLen);
+}
+
+std::vector<uint8_t> RIPEMD160Hash(const std::vector<uint8_t>& data) {
+    // Create context window to track hashing state
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        std::cerr << "Error: Failed to create RIPEMD160 context" << std::endl;
+        exit(1);
+    }
+
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLen = 0;
+
+    // (init ripemd160, feed data into hash, complete and write has resul)
+    if (EVP_DigestInit_ex(ctx, EVP_ripemd160(), nullptr) <= 0 ||
+        EVP_DigestUpdate(ctx, data.data(), data.size()) <= 0 ||
+        EVP_DigestFinal_ex(ctx, hash, &hashLen) <= 0) {
+        std::cerr << "Error: RIPEMD160 hashing failed" << std::endl;
+        EVP_MD_CTX_free(ctx);
+        exit(1);
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return std::vector<uint8_t>(hash, hash + hashLen);
 }

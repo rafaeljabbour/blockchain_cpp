@@ -17,4 +17,7 @@ std::vector<uint8_t> HexStringToByteArray(const std::string& hex);
 void ReverseBytes(std::vector<uint8_t>& data);
 std::vector<uint8_t> StringToBytes(const std::string& str);
 std::string BytesToString(const std::vector<uint8_t>& bytes);
+std::vector<uint8_t> SHA256Hash(const std::vector<uint8_t>& data);
+std::vector<uint8_t> RIPEMD160Hash(const std::vector<uint8_t>& data);
+
 #endif

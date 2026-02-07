@@ -1,12 +1,11 @@
 #include "block.h"
 
-#include <openssl/sha.h>
-
 #include <cstdint>
 #include <ctime>
 #include <vector>
 
 #include "proofOfWork.h"
+#include "utils.h"
 
 Block::Block(const std::vector<Transaction>& transactions,
              const std::vector<uint8_t>& previousHash) {
@@ -125,10 +124,8 @@ std::vector<uint8_t> Block::HashTransactions() const {
         std::vector<uint8_t> txId = tx.GetID();
         txHashes.insert(txHashes.end(), txId.begin(), txId.end());
     }
-    std::vector<uint8_t> txHash(SHA256_DIGEST_LENGTH);
-    SHA256(txHashes.data(), txHashes.size(), txHash.data());
 
-    return txHash;
+    return SHA256Hash(txHashes);
 }
 
 Block Block::NewGenesisBlock(const Transaction& coinbase) {
