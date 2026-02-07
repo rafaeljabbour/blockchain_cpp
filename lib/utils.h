@@ -3,6 +3,7 @@
 
 #include <leveldb/slice.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,5 +14,7 @@ std::string ByteArrayToString(const std::vector<uint8_t>& bytes);
 leveldb::Slice ByteArrayToSlice(const std::vector<uint8_t>& bytes);
 std::vector<uint8_t> IntToHexByteArray(int64_t num);
 std::vector<uint8_t> HexStringToByteArray(const std::string& hex);
-
+void ReverseBytes(std::vector<uint8_t>& data);
+std::vector<uint8_t> StringToBytes(const std::string& str);
+std::string BytesToString(const std::vector<uint8_t>& bytes);
 #endif

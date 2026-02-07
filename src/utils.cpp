@@ -51,3 +51,13 @@ std::vector<uint8_t> HexStringToByteArray(const std::string& hex) {
 
     return bytes;
 }
+
+void ReverseBytes(std::vector<uint8_t>& data) { std::reverse(data.begin(), data.end()); }
+
+std::vector<uint8_t> StringToBytes(const std::string& str) {
+    return std::vector<uint8_t>(str.begin(), str.end());
+}
+
+std::string BytesToString(const std::vector<uint8_t>& bytes) {
+    return std::string(bytes.begin(), bytes.end());
+}
