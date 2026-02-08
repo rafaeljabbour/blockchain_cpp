@@ -70,6 +70,8 @@ void Wallets::LoadFromFile() {
 void Wallets::SaveToFile() const {
     std::vector<uint8_t> data = Serialize();
 
+    std::filesystem::create_directories(std::filesystem::path(WALLET_FILE).parent_path());
+
     std::ofstream file(WALLET_FILE, std::ios::binary | std::ios::trunc);
     if (!file) {
         throw std::runtime_error("Failed to open wallet file for writing");

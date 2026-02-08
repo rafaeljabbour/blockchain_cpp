@@ -4,10 +4,8 @@
 makefile
 
 build/
-tmp/
+data/
 obj/
-src/blockchain
-
 
 # Prerequisites
 *.d

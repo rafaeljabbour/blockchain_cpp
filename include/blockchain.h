@@ -16,7 +16,7 @@
 // Forward declaration
 class Wallet;
 
-inline const std::string DB_FILE = "./tmp/blocks";
+inline const std::string DB_FILE = "./data/blocks";
 inline const std::string GENESIS_COINBASE_DATA =
     "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
 

@@ -9,7 +9,7 @@
 #include <vector>
 
 const uint8_t VERSION = 0x00;
-const std::string WALLET_FILE = "wallet.dat";
+const std::string WALLET_FILE = "./data/wallet.dat";
 const int ADDRESS_CHECKSUM_LEN = 4;
 
 // RAII type alias for ownership
