@@ -1,6 +1,5 @@
 #include "blockchainIterator.h"
 
-#include <cerrno>
 #include <iostream>
 #include <vector>
 
@@ -16,10 +15,8 @@ Block BlockchainIterator::Next() {
     leveldb::Status status =
         db->Get(leveldb::ReadOptions(), ByteArrayToSlice(currentHash), &serializedBlock);
     if (!status.ok()) {
-        if (!status.ok()) {
-            std::cerr << "Error reading block: " << status.ToString() << std::endl;
-            throw std::runtime_error("Failed to read block from database");
-        }
+        std::cerr << "Error reading block: " << status.ToString() << std::endl;
+        throw std::runtime_error("Failed to read block from database");
     }
 
     std::vector<uint8_t> data(serializedBlock.begin(), serializedBlock.end());

@@ -12,6 +12,7 @@ const std::string WALLET_FILE = "wallet.dat";
 const int ADDRESS_CHECKSUM_LEN = 4;
 
 class Wallet {
+        friend class Blockchain;
         friend class Wallets;
 
     private:

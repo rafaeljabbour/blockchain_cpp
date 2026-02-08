@@ -17,7 +17,7 @@ bool Transaction::IsCoinbase() const {
     return vin.size() == 1 && vin[0].GetTxid().empty() && vin[0].GetVout() == -1;
 }
 
-std::vector<uint8_t> Transaction::Hash() { return SHA256Hash(Serialize()); }
+std::vector<uint8_t> Transaction::Hash() const { return SHA256Hash(Serialize()); }
 
 void Transaction::Sign(EVP_PKEY* privKey, const std::map<std::string, Transaction>& prevTXs) {
     if (IsCoinbase()) {

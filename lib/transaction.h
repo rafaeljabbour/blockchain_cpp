@@ -31,7 +31,7 @@ class Transaction {
 
         bool IsCoinbase() const;
 
-        std::vector<uint8_t> Hash();
+        std::vector<uint8_t> Hash() const;
         void Sign(EVP_PKEY* privKey, const std::map<std::string, Transaction>& prevTXs);
         bool Verify(const std::map<std::string, Transaction>& prevTXs) const;
         Transaction TrimmedCopy() const;
