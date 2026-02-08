@@ -121,8 +121,8 @@ std::vector<uint8_t> Block::HashTransactions() const {
     std::vector<uint8_t> txHashes;
 
     for (const Transaction& tx : transactions) {
-        std::vector<uint8_t> txId = tx.GetID();
-        txHashes.insert(txHashes.end(), txId.begin(), txId.end());
+        std::vector<uint8_t> txHash = tx.Hash();
+        txHashes.insert(txHashes.end(), txHash.begin(), txHash.end());
     }
 
     return SHA256Hash(txHashes);

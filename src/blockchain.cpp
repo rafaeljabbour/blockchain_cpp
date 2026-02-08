@@ -7,6 +7,7 @@
 
 #include "blockchainIterator.h"
 #include "utils.h"
+#include "wallet.h"
 
 bool Blockchain::DBExists() {
     leveldb::DB* db;
@@ -46,7 +47,7 @@ Blockchain::Blockchain() {
 
 std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& address) {
     if (DBExists()) {
-        std::cerr << "DB already exists." << std::endl;
+        std::cerr << "Blockchain already exists." << std::endl;
         exit(1);
     }
 
@@ -86,6 +87,14 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
 Blockchain::~Blockchain() { delete db; }
 
 void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
+    // verify all transactions before mining
+    for (const Transaction& tx : transactions) {
+        if (!VerifyTransaction(&tx)) {
+            std::cerr << "ERROR: Invalid transaction" << std::endl;
+            exit(1);
+        }
+    }
+
     std::string lastHashString;
     leveldb::Status status = db->Get(leveldb::ReadOptions(), "l", &lastHashString);
 
@@ -114,7 +123,8 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     tip = newHash;
 }
 
-std::vector<Transaction> Blockchain::FindUnspentTransactions(const std::string& address) {
+std::vector<Transaction> Blockchain::FindUnspentTransactions(
+    const std::vector<uint8_t>& pubKeyHash) {
     std::vector<Transaction> unspentTXs;
     std::map<std::string, std::vector<int>> spentTXOs;
     BlockchainIterator bci = Iterator();
@@ -128,24 +138,27 @@ std::vector<Transaction> Blockchain::FindUnspentTransactions(const std::string& 
             for (size_t outIdx = 0; outIdx < tx.GetVout().size(); outIdx++) {
                 const TransactionOutput& out = tx.GetVout()[outIdx];
 
+                // check if the output was spent
                 if (spentTXOs.count(txID)) {
                     bool wasSpent = false;
-                    for (int spentOut : spentTXOs[txID]) {
-                        if (spentOut == static_cast<int>(outIdx)) {
+                    for (int spentOutIdx : spentTXOs[txID]) {
+                        if (spentOutIdx == static_cast<int>(outIdx)) {
                             wasSpent = true;
                             break;
                         }
                     }
                     if (wasSpent) continue;
                 }
-                if (out.CanBeUnlockedWith(address)) {
+
+                if (out.IsLockedWithKey(pubKeyHash)) {
                     unspentTXs.push_back(tx);
                 }
             }
-            // Gather spent outputs
+
+            // gather spent outputs
             if (!tx.IsCoinbase()) {
                 for (const TransactionInput& in : tx.GetVin()) {
-                    if (in.CanUnlockOutputWith(address)) {
+                    if (in.UsesKey(pubKeyHash)) {
                         std::string inTxID = ByteArrayToHexString(in.GetTxid());
                         spentTXOs[inTxID].push_back(in.GetVout());
                     }
@@ -157,13 +170,13 @@ std::vector<Transaction> Blockchain::FindUnspentTransactions(const std::string& 
     return unspentTXs;
 }
 
-std::vector<TransactionOutput> Blockchain::FindUTXO(const std::string& address) {
+std::vector<TransactionOutput> Blockchain::FindUTXO(const std::vector<uint8_t>& pubKeyHash) {
     std::vector<TransactionOutput> UTXOs;
-    std::vector<Transaction> unspentTransactions = FindUnspentTransactions(address);
+    std::vector<Transaction> unspentTransactions = FindUnspentTransactions(pubKeyHash);
 
     for (const Transaction& tx : unspentTransactions) {
         for (const TransactionOutput& out : tx.GetVout()) {
-            if (out.CanBeUnlockedWith(address)) {
+            if (out.IsLockedWithKey(pubKeyHash)) {
                 UTXOs.push_back(out);
             }
         }
@@ -173,9 +186,9 @@ std::vector<TransactionOutput> Blockchain::FindUTXO(const std::string& address) 
 }
 
 std::pair<int, std::map<std::string, std::vector<int>>> Blockchain::FindSpendableOutputs(
-    const std::string& address, int amount) {
+    const std::vector<uint8_t>& pubKeyHash, int amount) {
     std::map<std::string, std::vector<int>> unspentOutputs;
-    std::vector<Transaction> unspentTXs = FindUnspentTransactions(address);
+    std::vector<Transaction> unspentTXs = FindUnspentTransactions(pubKeyHash);
     int accumulated = 0;
 
     for (const Transaction& tx : unspentTXs) {
@@ -184,12 +197,13 @@ std::pair<int, std::map<std::string, std::vector<int>>> Blockchain::FindSpendabl
         for (size_t outIdx = 0; outIdx < tx.GetVout().size(); outIdx++) {
             const TransactionOutput& out = tx.GetVout()[outIdx];
 
-            if (out.CanBeUnlockedWith(address) && accumulated < amount) {
+            if (out.IsLockedWithKey(pubKeyHash) && accumulated < amount) {
                 accumulated += out.GetValue();
                 unspentOutputs[txID].push_back(outIdx);
 
                 if (accumulated >= amount) {
-                    goto Done;  // Break out of nested loops
+                    // to break out of the nested loops
+                    goto Done;
                 }
             }
         }
@@ -197,6 +211,51 @@ std::pair<int, std::map<std::string, std::vector<int>>> Blockchain::FindSpendabl
 
 Done:
     return {accumulated, unspentOutputs};
+}
+
+Transaction Blockchain::FindTransaction(const std::vector<uint8_t>& ID) {
+    BlockchainIterator bci = Iterator();
+
+    while (bci.hasNext()) {
+        Block block = bci.Next();
+
+        for (const Transaction& tx : block.GetTransactions()) {
+            if (tx.GetID() == ID) {
+                return tx;
+            }
+        }
+    }
+
+    std::cerr << "Error: Transaction not found" << std::endl;
+    exit(1);
+}
+
+void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
+    std::map<std::string, Transaction> prevTXs;
+
+    // collect all previous transactions being spent, the inputs this output is spending
+    for (const auto& vin : tx->GetVin()) {
+        Transaction prevTX = FindTransaction(vin.GetTxid());
+        prevTXs[ByteArrayToHexString(prevTX.GetID())] = prevTX;
+    }
+
+    tx->Sign(wallet->privateKey, prevTXs);
+}
+
+bool Blockchain::VerifyTransaction(const Transaction* tx) {
+    if (tx->IsCoinbase()) {
+        return true;
+    }
+
+    std::map<std::string, Transaction> prevTXs;
+
+    // collect all previous transactions being spent, the inputs this output is spending
+    for (const auto& vin : tx->GetVin()) {
+        Transaction prevTX = FindTransaction(vin.GetTxid());
+        prevTXs[ByteArrayToHexString(prevTX.GetID())] = prevTX;
+    }
+
+    return tx->Verify(prevTXs);
 }
 
 BlockchainIterator Blockchain::Iterator() { return BlockchainIterator(tip, db); }

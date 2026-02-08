@@ -13,6 +13,9 @@
 #include "blockchainIterator.h"
 #include "transaction.h"
 
+// Forward declaration
+class Wallet;
+
 inline const std::string DB_FILE = "./tmp/blocks";
 inline const std::string BLOCKS_BUCKET = "blocks";
 inline const std::string GENESIS_COINBASE_DATA =
@@ -29,10 +32,14 @@ class Blockchain {
 
         void MineBlock(const std::vector<Transaction>& transactions);
 
-        std::vector<Transaction> FindUnspentTransactions(const std::string& address);
-        std::vector<TransactionOutput> FindUTXO(const std::string& address);
+        std::vector<Transaction> FindUnspentTransactions(const std::vector<uint8_t>& pubKeyHash);
+        std::vector<TransactionOutput> FindUTXO(const std::vector<uint8_t>& pubKeyHash);
         std::pair<int, std::map<std::string, std::vector<int>>> FindSpendableOutputs(
-            const std::string& address, int amount);
+            const std::vector<uint8_t>& pubKeyHash, int amount);
+
+        Transaction FindTransaction(const std::vector<uint8_t>& ID);
+        void SignTransaction(Transaction* tx, Wallet* wallet);
+        bool VerifyTransaction(const Transaction* tx);
 
         BlockchainIterator Iterator();
 
