@@ -1,6 +1,8 @@
 #include "transaction.h"
 
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
+#include <openssl/params.h>
 
 #include <iostream>
 
@@ -118,14 +120,36 @@ bool Transaction::Verify(const std::map<std::string, Transaction>& prevTXs) cons
         // extract public key from input
         const std::vector<uint8_t>& pubKeyBytes = vin[inID].GetPubKey();
 
-        // create EVP_PKEY type key from public key bytes
-        EVP_PKEY* pubKey = EVP_PKEY_new_raw_public_key(EVP_PKEY_EC, nullptr, pubKeyBytes.data(),
-                                                       pubKeyBytes.size());
-
-        if (!pubKey) {
-            std::cerr << "Error: Failed to create public key from bytes" << std::endl;
+        // create EVP_PKEY from public key bytes using fromdata
+        EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+        if (!pctx) {
+            std::cerr << "Error: Failed to create context for public key" << std::endl;
             return false;
         }
+
+
+        if (EVP_PKEY_fromdata_init(pctx) <= 0) {
+            std::cerr << "Error: Failed to init fromdata" << std::endl;
+            EVP_PKEY_CTX_free(pctx);
+            return false;
+        }
+
+        OSSL_PARAM params[3];
+        params[0] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
+                                                     const_cast<char*>("secp256k1"), 0);
+        params[1] = OSSL_PARAM_construct_octet_string(
+            OSSL_PKEY_PARAM_PUB_KEY, const_cast<uint8_t*>(pubKeyBytes.data()), pubKeyBytes.size());
+        params[2] = OSSL_PARAM_construct_end();
+
+        // calculate EVP_KEY for secp256k1 using the parameters
+        EVP_PKEY* pubKey = nullptr;
+        if (EVP_PKEY_fromdata(pctx, &pubKey, EVP_PKEY_PUBLIC_KEY, params) <= 0) {
+            std::cerr << "Error: Failed to create public key from bytes" << std::endl;
+            EVP_PKEY_CTX_free(pctx);
+            return false;
+        }
+
+        EVP_PKEY_CTX_free(pctx);
 
         // create context for verifying signature
         EVP_MD_CTX* mdctx = EVP_MD_CTX_new();

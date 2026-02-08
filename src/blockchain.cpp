@@ -236,7 +236,7 @@ void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
     // collect all previous transactions being spent, the inputs this output is spending
     for (const auto& vin : tx->GetVin()) {
         Transaction prevTX = FindTransaction(vin.GetTxid());
-        prevTXs[ByteArrayToHexString(prevTX.GetID())] = prevTX;
+        prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
     tx->Sign(wallet->privateKey, prevTXs);
@@ -252,7 +252,7 @@ bool Blockchain::VerifyTransaction(const Transaction* tx) {
     // collect all previous transactions being spent, the inputs this output is spending
     for (const auto& vin : tx->GetVin()) {
         Transaction prevTX = FindTransaction(vin.GetTxid());
-        prevTXs[ByteArrayToHexString(prevTX.GetID())] = prevTX;
+        prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
     return tx->Verify(prevTXs);
