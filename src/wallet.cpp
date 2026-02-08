@@ -3,6 +3,7 @@
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
+#include <openssl/param_build.h>
 #include <openssl/params.h>
 
 #include <cstring>
@@ -135,34 +136,65 @@ std::vector<uint8_t> Wallet::Checksum(const std::vector<uint8_t>& payload) {
 
 Wallet::Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8_t>& pubKeyBytes)
     : privateKey(nullptr), publicKey(pubKeyBytes) {
-    // we reconstruct private key from bytes using OpenSSL library
+    // convert private key bytes into a BIGNUM
+    BIGNUM* privBN = BN_bin2bn(privKeyBytes.data(), privKeyBytes.size(), nullptr);
+    if (!privBN) {
+        std::cerr << "Error: Failed to convert private key bytes to BIGNUM" << std::endl;
+        exit(1);
+    }
+
+    // use the parameter builder API to handles BIGNUM encoding
+    OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+    if (!bld) {
+        std::cerr << "Error: Failed to create OSSL_PARAM_BLD" << std::endl;
+        BN_free(privBN);
+        exit(1);
+    }
+
+    // add the parameters
+    if (OSSL_PARAM_BLD_push_utf8_string(bld, OSSL_PKEY_PARAM_GROUP_NAME, "secp256k1", 0) <= 0 ||
+        OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, privBN) <= 0 ||
+        OSSL_PARAM_BLD_push_octet_string(bld, OSSL_PKEY_PARAM_PUB_KEY, pubKeyBytes.data(),
+                                         pubKeyBytes.size()) <= 0) {
+        std::cerr << "Error: Failed to set key parameters" << std::endl;
+        OSSL_PARAM_BLD_free(bld);
+        BN_free(privBN);
+        exit(1);
+    }
+
+    // create the parameter array
+    OSSL_PARAM* params = OSSL_PARAM_BLD_to_param(bld);
+    OSSL_PARAM_BLD_free(bld);
+    BN_free(privBN);
+
+    if (!params) {
+        std::cerr << "Error: Failed to build parameters" << std::endl;
+        exit(1);
+    }
+
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
     if (!ctx) {
         std::cerr << "Error: Failed to create EVP_PKEY_CTX for deserialization" << std::endl;
+        OSSL_PARAM_free(params);
         exit(1);
     }
 
     if (EVP_PKEY_fromdata_init(ctx) <= 0) {
         std::cerr << "Error: Failed to initialize fromdata" << std::endl;
         EVP_PKEY_CTX_free(ctx);
+        OSSL_PARAM_free(params);
         exit(1);
     }
-
-    OSSL_PARAM params[3];
-    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
-                                                 const_cast<char*>("secp256k1"), 0);
-    // store the private key as a parameter (bignum)
-    params[1] = OSSL_PARAM_construct_BN(
-        OSSL_PKEY_PARAM_PRIV_KEY, const_cast<uint8_t*>(privKeyBytes.data()), privKeyBytes.size());
-    params[2] = OSSL_PARAM_construct_end();
 
     if (EVP_PKEY_fromdata(ctx, &privateKey, EVP_PKEY_KEYPAIR, params) <= 0) {
         std::cerr << "Error: Failed to reconstruct private key from bytes" << std::endl;
         EVP_PKEY_CTX_free(ctx);
+        OSSL_PARAM_free(params);
         exit(1);
     }
 
     EVP_PKEY_CTX_free(ctx);
+    OSSL_PARAM_free(params);
 }
 
 std::vector<uint8_t> Wallet::GetPrivateKeyBytes() const {
