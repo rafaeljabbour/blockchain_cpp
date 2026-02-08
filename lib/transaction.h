@@ -1,6 +1,9 @@
 #ifndef TRANSACTION_H
 #define TRANSACTION_H
 
+#include <openssl/evp.h>
+
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,14 +24,17 @@ class Transaction {
         Transaction(const std::vector<uint8_t>& id, const std::vector<TransactionInput>& vin,
                     const std::vector<TransactionOutput>& vout);
 
-        void SetID();
-
     public:
         const std::vector<uint8_t>& GetID() const { return id; }
         const std::vector<TransactionInput>& GetVin() const { return vin; }
         const std::vector<TransactionOutput>& GetVout() const { return vout; }
 
         bool IsCoinbase() const;
+
+        std::vector<uint8_t> Hash();
+        void Sign(EVP_PKEY* privKey, const std::map<std::string, Transaction>& prevTXs);
+        bool Verify(const std::map<std::string, Transaction>& prevTXs) const;
+        Transaction TrimmedCopy() const;
 
         static Transaction NewCoinbaseTX(const std::string& to, const std::string& data = "");
         static Transaction NewUTXOTransaction(const std::string& from, const std::string& to,
