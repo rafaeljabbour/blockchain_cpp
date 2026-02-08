@@ -4,6 +4,7 @@
 #include <openssl/evp.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,24 +12,27 @@ const uint8_t VERSION = 0x00;
 const std::string WALLET_FILE = "wallet.dat";
 const int ADDRESS_CHECKSUM_LEN = 4;
 
+// RAII type alias for ownership
+using EVP_PKEY_owned = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+
 class Wallet {
         friend class Blockchain;
         friend class Wallets;
 
     private:
-        EVP_PKEY* privateKey;  // Note: EC_KEY is deprecated
+        EVP_PKEY_owned privateKey;
         std::vector<uint8_t> publicKey;
 
-        static std::pair<EVP_PKEY*, std::vector<uint8_t>> NewKeyPair();
+        static std::pair<EVP_PKEY_owned, std::vector<uint8_t>> NewKeyPair();
         static std::vector<uint8_t> Checksum(const std::vector<uint8_t>& payload);
         std::vector<uint8_t> GetPrivateKeyBytes() const;
         Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8_t>& pubKeyBytes);
 
     public:
         Wallet();
-        ~Wallet();
+        ~Wallet() = default;
 
-        // Removing default copy operators
+        // prevent copying
         Wallet(const Wallet&) = delete;
         Wallet& operator=(const Wallet&) = delete;
 

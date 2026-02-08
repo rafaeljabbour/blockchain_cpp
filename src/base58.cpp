@@ -3,7 +3,7 @@
 #include <openssl/bn.h>
 
 #include <cstring>
-#include <iostream>
+#include <memory>
 #include <vector>
 
 #include "utils.h"
@@ -11,24 +11,30 @@
 // Bitcoin Base58 alphabet (no 0, O, I, l to avoid confusion)
 static const char BASE58_ALPHABET[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+// RAII type aliases the BIGNUM resources
+using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
+using BN_CTX_ptr = std::unique_ptr<BN_CTX, decltype(&BN_CTX_free)>;
+
 std::vector<uint8_t> Base58Encode(const std::vector<uint8_t>& input) {
     std::vector<uint8_t> result;
 
-    BIGNUM* x = BN_new();
-    BN_bin2bn(input.data(), input.size(), x);
+    BN_ptr x(BN_new(), BN_free);
+    BN_ptr base(BN_new(), BN_free);
+    BN_ptr zero(BN_new(), BN_free);
+    BN_ptr mod(BN_new(), BN_free);
+    BN_CTX_ptr ctx(BN_CTX_new(), BN_CTX_free);
 
-    BIGNUM* base = BN_new();
-    BN_set_word(base, sizeof(BASE58_ALPHABET) - 1);
+    if (!x || !base || !zero || !mod || !ctx) {
+        throw std::runtime_error("Failed to allocate BIGNUM resources for Base58 encoding");
+    }
 
-    BIGNUM* zero = BN_new();
-    BN_zero(zero);
+    BN_bin2bn(input.data(), input.size(), x.get());
+    BN_set_word(base.get(), sizeof(BASE58_ALPHABET) - 1);
+    BN_zero(zero.get());
 
-    BIGNUM* mod = BN_new();
-    BN_CTX* ctx = BN_CTX_new();
-
-    while (BN_cmp(x, zero) != 0) {
-        BN_div(x, mod, x, base, ctx);
-        result.push_back(BASE58_ALPHABET[BN_get_word(mod)]);
+    while (BN_cmp(x.get(), zero.get()) != 0) {
+        BN_div(x.get(), mod.get(), x.get(), base.get(), ctx.get());
+        result.push_back(BASE58_ALPHABET[BN_get_word(mod.get())]);
     }
 
     ReverseBytes(result);
@@ -42,24 +48,21 @@ std::vector<uint8_t> Base58Encode(const std::vector<uint8_t>& input) {
         }
     }
 
-    BN_free(x);
-    BN_free(base);
-    BN_free(zero);
-    BN_free(mod);
-    BN_CTX_free(ctx);
-
     return result;
 }
 
 std::vector<uint8_t> Base58Decode(const std::vector<uint8_t>& input) {
-    BIGNUM* result = BN_new();
-    BN_zero(result);
+    BN_ptr result(BN_new(), BN_free);
+    BN_ptr base(BN_new(), BN_free);
+    BN_ptr charValue(BN_new(), BN_free);
+    BN_CTX_ptr ctx(BN_CTX_new(), BN_CTX_free);
 
-    BIGNUM* base = BN_new();
-    BN_set_word(base, sizeof(BASE58_ALPHABET) - 1);
+    if (!result || !base || !charValue || !ctx) {
+        throw std::runtime_error("Failed to allocate BIGNUM resources for Base58 decoding");
+    }
 
-    BIGNUM* charValue = BN_new();
-    BN_CTX* ctx = BN_CTX_new();
+    BN_zero(result.get());
+    BN_set_word(base.get(), sizeof(BASE58_ALPHABET) - 1);
 
     uint32_t zeroBytes = 0;
 
@@ -74,30 +77,21 @@ std::vector<uint8_t> Base58Decode(const std::vector<uint8_t>& input) {
     for (size_t i = zeroBytes; i < input.size(); i++) {
         const char* p = strchr(BASE58_ALPHABET, input[i]);
         if (!p) {
-            std::cerr << "Error: Invalid Base58 character '" << input[i] << "'" << std::endl;
-            BN_free(result);
-            BN_free(base);
-            BN_free(charValue);
-            BN_CTX_free(ctx);
-            exit(1);
+            throw std::runtime_error(std::string("Invalid Base58 character '") +
+                                     static_cast<char>(input[i]) + "'");
         }
 
         int charIndex = p - BASE58_ALPHABET;
-        BN_mul(result, result, base, ctx);
-        BN_set_word(charValue, charIndex);
-        BN_add(result, result, charValue);
+        BN_mul(result.get(), result.get(), base.get(), ctx.get());
+        BN_set_word(charValue.get(), charIndex);
+        BN_add(result.get(), result.get(), charValue.get());
     }
 
-    std::vector<uint8_t> decoded(BN_num_bytes(result));
-    BN_bn2bin(result, decoded.data());
+    std::vector<uint8_t> decoded(BN_num_bytes(result.get()));
+    BN_bn2bin(result.get(), decoded.data());
 
     std::vector<uint8_t> finalResult(zeroBytes, 0x00);
     finalResult.insert(finalResult.end(), decoded.begin(), decoded.end());
-
-    BN_free(result);
-    BN_free(base);
-    BN_free(charValue);
-    BN_CTX_free(ctx);
 
     return finalResult;
 }

@@ -2,7 +2,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 
 #include "utils.h"
 
@@ -55,17 +54,14 @@ void Wallets::LoadFromFile() {
 
     std::ifstream file(WALLET_FILE, std::ios::binary);
     if (!file) {
-        std::cerr << "Error: Failed to open wallet file for reading" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to open wallet file for reading");
     }
 
     std::vector<uint8_t> data(fileSize);
     file.read(reinterpret_cast<char*>(data.data()), fileSize);
-    file.close();
 
     if (!file) {
-        std::cerr << "Error: Failed to read wallet file" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to read wallet file");
     }
 
     Deserialize(data);
@@ -76,16 +72,13 @@ void Wallets::SaveToFile() const {
 
     std::ofstream file(WALLET_FILE, std::ios::binary | std::ios::trunc);
     if (!file) {
-        std::cerr << "Error: Failed to open wallet file for writing" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to open wallet file for writing");
     }
 
     file.write(reinterpret_cast<const char*>(data.data()), data.size());
-    file.close();
 
     if (!file) {
-        std::cerr << "Error: Failed to write wallet file" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to write wallet file");
     }
 }
 
@@ -95,10 +88,7 @@ std::vector<uint8_t> Wallets::Serialize() const {
     std::vector<uint8_t> serialized;
 
     // number of wallets (4 bytes)
-    uint32_t walletCount = wallets.size();
-    for (int i = 0; i < 4; i++) {
-        serialized.push_back((walletCount >> (8 * i)) & 0xFF);
-    }
+    WriteUint32(serialized, static_cast<uint32_t>(wallets.size()));
 
     // each wallet
     for (const auto& [address, wallet] : wallets) {
@@ -107,29 +97,17 @@ std::vector<uint8_t> Wallets::Serialize() const {
         const std::vector<uint8_t>& pubKeyBytes = wallet->GetPublicKey();
 
         // address length (4 bytes)
-        uint32_t addressLen = address.length();
-        for (int i = 0; i < 4; i++) {
-            serialized.push_back((addressLen >> (8 * i)) & 0xFF);
-        }
-
+        WriteUint32(serialized, static_cast<uint32_t>(address.length()));
         // address (variable bytes)
         serialized.insert(serialized.end(), address.begin(), address.end());
 
         // private key length (4 bytes)
-        uint32_t privKeyLen = privKeyBytes.size();
-        for (int i = 0; i < 4; i++) {
-            serialized.push_back((privKeyLen >> (8 * i)) & 0xFF);
-        }
-
+        WriteUint32(serialized, static_cast<uint32_t>(privKeyBytes.size()));
         // private key bytes (variable bytes)
         serialized.insert(serialized.end(), privKeyBytes.begin(), privKeyBytes.end());
 
         // public key length (4 bytes)
-        uint32_t pubKeyLen = pubKeyBytes.size();
-        for (int i = 0; i < 4; i++) {
-            serialized.push_back((pubKeyLen >> (8 * i)) & 0xFF);
-        }
-
+        WriteUint32(serialized, static_cast<uint32_t>(pubKeyBytes.size()));
         // public key bytes (variable bytes)
         serialized.insert(serialized.end(), pubKeyBytes.begin(), pubKeyBytes.end());
     }
@@ -140,51 +118,43 @@ std::vector<uint8_t> Wallets::Serialize() const {
 void Wallets::Deserialize(const std::vector<uint8_t>& serialized) {
     size_t offset = 0;
 
-    if (serialized.size() < 4) {
-        std::cerr << "Error: Invalid wallet file format" << std::endl;
-        exit(1);
-    }
-
     // number of wallets (4 bytes)
-    uint32_t walletCount = 0;
-    for (int i = 0; i < 4; i++) {
-        walletCount |= (serialized[offset + i] << (8 * i));
-    }
+    uint32_t walletCount = ReadUint32(serialized, offset);
     offset += 4;
 
     // Deserialize each wallet
     for (uint32_t i = 0; i < walletCount; i++) {
         // address length (4 bytes)
-        uint32_t addressLen = 0;
-        for (int j = 0; j < 4; j++) {
-            addressLen |= (serialized[offset + j] << (8 * j));
-        }
+        uint32_t addressLen = ReadUint32(serialized, offset);
         offset += 4;
 
         // address (variable bytes)
+        if (offset + addressLen > serialized.size()) {
+            throw std::runtime_error("Wallet file corrupted: address data truncated");
+        }
         std::string address(serialized.begin() + offset, serialized.begin() + offset + addressLen);
         offset += addressLen;
 
         // private key length (4 bytes)
-        uint32_t privKeyLen = 0;
-        for (int j = 0; j < 4; j++) {
-            privKeyLen |= (serialized[offset + j] << (8 * j));
-        }
+        uint32_t privKeyLen = ReadUint32(serialized, offset);
         offset += 4;
 
         // private key bytes (variable bytes)
+        if (offset + privKeyLen > serialized.size()) {
+            throw std::runtime_error("Wallet file corrupted: private key data truncated");
+        }
         std::vector<uint8_t> privKeyBytes(serialized.begin() + offset,
                                           serialized.begin() + offset + privKeyLen);
         offset += privKeyLen;
 
-        // Read public key length (4 bytes)
-        uint32_t pubKeyLen = 0;
-        for (int j = 0; j < 4; j++) {
-            pubKeyLen |= (serialized[offset + j] << (8 * j));
-        }
+        // public key length (4 bytes)
+        uint32_t pubKeyLen = ReadUint32(serialized, offset);
         offset += 4;
 
         // public key bytes (variable bytes)
+        if (offset + pubKeyLen > serialized.size()) {
+            throw std::runtime_error("Wallet file corrupted: public key data truncated");
+        }
         std::vector<uint8_t> pubKeyBytes(serialized.begin() + offset,
                                          serialized.begin() + offset + pubKeyLen);
         offset += pubKeyLen;

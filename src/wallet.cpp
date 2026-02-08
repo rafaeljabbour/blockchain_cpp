@@ -6,40 +6,33 @@
 #include <openssl/param_build.h>
 #include <openssl/params.h>
 
-#include <cstring>
-#include <iostream>
+#include <memory>
 
 #include "base58.h"
 #include "utils.h"
 
-Wallet::Wallet() {
-    auto [privateKey, publicKey] = NewKeyPair();
-    this->privateKey = privateKey;
-    this->publicKey = publicKey;
-}
+// RAII type aliases resources
+using EVP_PKEY_CTX_ptr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
+using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
+using OSSL_PARAM_BLD_ptr = std::unique_ptr<OSSL_PARAM_BLD, decltype(&OSSL_PARAM_BLD_free)>;
+using OSSL_PARAM_ptr = std::unique_ptr<OSSL_PARAM, decltype(&OSSL_PARAM_free)>;
 
-Wallet::~Wallet() {
-    if (privateKey) {
-        EVP_PKEY_free(privateKey);
-    }
+Wallet::Wallet() : privateKey(nullptr, EVP_PKEY_free) {
+    auto [privateKey, publicKey] = NewKeyPair();
+    this->privateKey = std::move(privateKey);
+    this->publicKey = std::move(publicKey);
 }
 
 // generates a new ECDSA key pair using secp256k1 curve
-std::pair<EVP_PKEY*, std::vector<uint8_t>> Wallet::NewKeyPair() {
-    EVP_PKEY* pkey = nullptr;
-    EVP_PKEY_CTX* ctx = nullptr;
-
-    // create eleptical curve workspace
-    ctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+std::pair<EVP_PKEY_owned, std::vector<uint8_t>> Wallet::NewKeyPair() {
+    // create elliptical curve workspace
+    EVP_PKEY_CTX_ptr ctx(EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr), EVP_PKEY_CTX_free);
     if (!ctx) {
-        std::cerr << "Error: Failed to create EVP_PKEY_CTX" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to create EVP_PKEY_CTX");
     }
 
-    if (EVP_PKEY_keygen_init(ctx) <= 0) {
-        std::cerr << "Error: Failed to initialize keygen" << std::endl;
-        EVP_PKEY_CTX_free(ctx);
-        exit(1);
+    if (EVP_PKEY_keygen_init(ctx.get()) <= 0) {
+        throw std::runtime_error("Failed to initialize keygen");
     }
 
     OSSL_PARAM params[2];
@@ -48,41 +41,34 @@ std::pair<EVP_PKEY*, std::vector<uint8_t>> Wallet::NewKeyPair() {
                                                  const_cast<char*>("secp256k1"), 0);
     params[1] = OSSL_PARAM_construct_end();
 
-    if (EVP_PKEY_CTX_set_params(ctx, params) <= 0) {
-        std::cerr << "Error: Failed to set secp256k1 curve" << std::endl;
-        EVP_PKEY_CTX_free(ctx);
-        exit(1);
+    if (EVP_PKEY_CTX_set_params(ctx.get(), params) <= 0) {
+        throw std::runtime_error("Failed to set secp256k1 curve");
     }
 
-    // generate the prive and public key container
-    if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
-        std::cerr << "Error: Failed to generate key pair" << std::endl;
-        EVP_PKEY_CTX_free(ctx);
-        exit(1);
+    // generate the private and public key container
+    EVP_PKEY* rawKey = nullptr;
+    if (EVP_PKEY_keygen(ctx.get(), &rawKey) <= 0) {
+        throw std::runtime_error("Failed to generate key pair");
     }
 
-    EVP_PKEY_CTX_free(ctx);
+    // wrap in RAII
+    EVP_PKEY_owned pkey(rawKey, EVP_PKEY_free);
 
     // get the length of public key
     size_t pubKeyLen = 0;
-    if (EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &pubKeyLen) <=
-        0) {
-        std::cerr << "Error: Failed to get public key length" << std::endl;
-        EVP_PKEY_free(pkey);
-        exit(1);
+    if (EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0,
+                                        &pubKeyLen) <= 0) {
+        throw std::runtime_error("Failed to get public key length");
     }
 
     // extract public key from container
     std::vector<uint8_t> pubKey(pubKeyLen);
-    if (EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_PUB_KEY, pubKey.data(), pubKeyLen,
-                                        nullptr) <= 0) {
-        std::cerr << "Error: Failed to extract public key" << std::endl;
-        EVP_PKEY_free(pkey);
-        exit(1);
+    if (EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PUB_KEY, pubKey.data(),
+                                        pubKeyLen, nullptr) <= 0) {
+        throw std::runtime_error("Failed to extract public key");
     }
 
-    // return the container and public key
-    return {pkey, pubKey};
+    return {std::move(pkey), pubKey};
 }
 
 std::vector<uint8_t> Wallet::GetAddress() const {
@@ -105,7 +91,13 @@ std::vector<uint8_t> Wallet::HashPubKey(const std::vector<uint8_t>& pubKey) {
 
 // verify the creation of address using the checksum
 bool Wallet::ValidateAddress(const std::string& address) {
-    std::vector<uint8_t> decoded = Base58DecodeStr(address);
+    std::vector<uint8_t> decoded;
+    try {
+        decoded = Base58DecodeStr(address);
+    } catch (const std::runtime_error&) {
+        // invalid Base58 characters means invalid address
+        return false;
+    }
 
     // at least version (1 byte) + checksum (4 bytes)
     if (decoded.size() < ADDRESS_CHECKSUM_LEN + 1) {
@@ -135,86 +127,67 @@ std::vector<uint8_t> Wallet::Checksum(const std::vector<uint8_t>& payload) {
 }
 
 Wallet::Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8_t>& pubKeyBytes)
-    : privateKey(nullptr), publicKey(pubKeyBytes) {
+    : privateKey(nullptr, EVP_PKEY_free), publicKey(pubKeyBytes) {
     // convert private key bytes into a BIGNUM
-    BIGNUM* privBN = BN_bin2bn(privKeyBytes.data(), privKeyBytes.size(), nullptr);
+    BN_ptr privBN(BN_bin2bn(privKeyBytes.data(), privKeyBytes.size(), nullptr), BN_free);
     if (!privBN) {
-        std::cerr << "Error: Failed to convert private key bytes to BIGNUM" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to convert private key bytes to BIGNUM");
     }
 
     // use the parameter builder API to handles BIGNUM encoding
-    OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+    OSSL_PARAM_BLD_ptr bld(OSSL_PARAM_BLD_new(), OSSL_PARAM_BLD_free);
     if (!bld) {
-        std::cerr << "Error: Failed to create OSSL_PARAM_BLD" << std::endl;
-        BN_free(privBN);
-        exit(1);
+        throw std::runtime_error("Failed to create OSSL_PARAM_BLD");
     }
 
     // add the parameters
-    if (OSSL_PARAM_BLD_push_utf8_string(bld, OSSL_PKEY_PARAM_GROUP_NAME, "secp256k1", 0) <= 0 ||
-        OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, privBN) <= 0 ||
-        OSSL_PARAM_BLD_push_octet_string(bld, OSSL_PKEY_PARAM_PUB_KEY, pubKeyBytes.data(),
+    if (OSSL_PARAM_BLD_push_utf8_string(bld.get(), OSSL_PKEY_PARAM_GROUP_NAME, "secp256k1", 0) <=
+            0 ||
+        OSSL_PARAM_BLD_push_BN(bld.get(), OSSL_PKEY_PARAM_PRIV_KEY, privBN.get()) <= 0 ||
+        OSSL_PARAM_BLD_push_octet_string(bld.get(), OSSL_PKEY_PARAM_PUB_KEY, pubKeyBytes.data(),
                                          pubKeyBytes.size()) <= 0) {
-        std::cerr << "Error: Failed to set key parameters" << std::endl;
-        OSSL_PARAM_BLD_free(bld);
-        BN_free(privBN);
-        exit(1);
+        throw std::runtime_error("Failed to set key parameters");
     }
 
     // create the parameter array
-    OSSL_PARAM* params = OSSL_PARAM_BLD_to_param(bld);
-    OSSL_PARAM_BLD_free(bld);
-    BN_free(privBN);
-
+    OSSL_PARAM_ptr params(OSSL_PARAM_BLD_to_param(bld.get()), OSSL_PARAM_free);
     if (!params) {
-        std::cerr << "Error: Failed to build parameters" << std::endl;
-        exit(1);
+        throw std::runtime_error("Failed to build parameters");
     }
 
-    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+    EVP_PKEY_CTX_ptr ctx(EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr), EVP_PKEY_CTX_free);
     if (!ctx) {
-        std::cerr << "Error: Failed to create EVP_PKEY_CTX for deserialization" << std::endl;
-        OSSL_PARAM_free(params);
-        exit(1);
+        throw std::runtime_error("Failed to create EVP_PKEY_CTX for deserialization");
     }
 
-    if (EVP_PKEY_fromdata_init(ctx) <= 0) {
-        std::cerr << "Error: Failed to initialize fromdata" << std::endl;
-        EVP_PKEY_CTX_free(ctx);
-        OSSL_PARAM_free(params);
-        exit(1);
+    if (EVP_PKEY_fromdata_init(ctx.get()) <= 0) {
+        throw std::runtime_error("Failed to initialize fromdata");
     }
 
-    if (EVP_PKEY_fromdata(ctx, &privateKey, EVP_PKEY_KEYPAIR, params) <= 0) {
-        std::cerr << "Error: Failed to reconstruct private key from bytes" << std::endl;
-        EVP_PKEY_CTX_free(ctx);
-        OSSL_PARAM_free(params);
-        exit(1);
+    EVP_PKEY* rawKey = nullptr;
+    if (EVP_PKEY_fromdata(ctx.get(), &rawKey, EVP_PKEY_KEYPAIR, params.get()) <= 0) {
+        throw std::runtime_error("Failed to reconstruct private key from bytes");
     }
-
-    EVP_PKEY_CTX_free(ctx);
-    OSSL_PARAM_free(params);
+    privateKey.reset(rawKey);
 }
 
 std::vector<uint8_t> Wallet::GetPrivateKeyBytes() const {
-    BIGNUM* privKeyBN = nullptr;
+    BIGNUM* rawBN = nullptr;
 
     // get private key as BIGNUM
-    if (EVP_PKEY_get_bn_param(privateKey, OSSL_PKEY_PARAM_PRIV_KEY, &privKeyBN) <= 0) {
-        std::cerr << "Error: Failed to get private key" << std::endl;
-        exit(1);
+    if (EVP_PKEY_get_bn_param(privateKey.get(), OSSL_PKEY_PARAM_PRIV_KEY, &rawBN) <= 0) {
+        throw std::runtime_error("Failed to get private key");
     }
+
+    // wrap in RAII
+    BN_ptr privKeyBN(rawBN, BN_free);
 
     // convert BIGNUM to bytes (32 bytes for secp256k1)
     std::vector<uint8_t> privKey(32);
-    int numBytes = BN_bn2binpad(privKeyBN, privKey.data(), 32);
-
-    BN_free(privKeyBN);
+    int numBytes = BN_bn2binpad(privKeyBN.get(), privKey.data(), 32);
 
     if (numBytes != 32) {
-        std::cerr << "Error: Private key has wrong size" << std::endl;
-        exit(1);
+        throw std::runtime_error("Private key has wrong size");
     }
 
     return privKey;

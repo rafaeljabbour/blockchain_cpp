@@ -4,12 +4,17 @@
 #include <openssl/evp.h>
 #include <openssl/params.h>
 
-#include <iostream>
+#include <memory>
 
 #include "blockchain.h"
 #include "utils.h"
 #include "wallet.h"
 #include "wallets.h"
+
+// RAII type aliases for resources
+using EVP_MD_CTX_ptr = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
+using EVP_PKEY_ptr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+using EVP_PKEY_CTX_ptr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
 
 Transaction::Transaction(const std::vector<uint8_t>& id, const std::vector<TransactionInput>& vin,
                          const std::vector<TransactionOutput>& vout)
@@ -30,8 +35,7 @@ void Transaction::Sign(EVP_PKEY* privKey, const std::map<std::string, Transactio
     for (const auto& vin : vin) {
         std::string txID = ByteArrayToHexString(vin.GetTxid());
         if (prevTXs.find(txID) == prevTXs.end() || prevTXs.at(txID).GetID().empty()) {
-            std::cerr << "ERROR: Previous transaction is not correct" << std::endl;
-            exit(1);
+            throw std::runtime_error("Previous transaction is not correct");
         }
     }
 
@@ -48,42 +52,30 @@ void Transaction::Sign(EVP_PKEY* privKey, const std::map<std::string, Transactio
         txCopy.vin[inID].pubKey = {};
 
         // set context for signing
-        EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+        EVP_MD_CTX_ptr mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
         if (!mdctx) {
-            std::cerr << "Error: Failed to create EVP_MD_CTX" << std::endl;
-            exit(1);
+            throw std::runtime_error("Failed to create EVP_MD_CTX for signing");
         }
 
         size_t sigLen = 0;
-        unsigned char* sig = nullptr;
 
         // initialize and setup signing with SHA256 and priv key, and calculate space for signature
-        if (EVP_DigestSignInit(mdctx, nullptr, EVP_sha256(), nullptr, privKey) <= 0 ||
-            EVP_DigestSign(mdctx, nullptr, &sigLen, txCopy.id.data(), txCopy.id.size()) <= 0) {
-            std::cerr << "Error: Failed to initialize signing" << std::endl;
-            EVP_MD_CTX_free(mdctx);
-            exit(1);
+        if (EVP_DigestSignInit(mdctx.get(), nullptr, EVP_sha256(), nullptr, privKey) <= 0 ||
+            EVP_DigestSign(mdctx.get(), nullptr, &sigLen, txCopy.id.data(), txCopy.id.size()) <=
+                0) {
+            throw std::runtime_error("Failed to initialize signing");
         }
 
-        // we allocate memory to hold the signature
-        sig = (unsigned char*)OPENSSL_malloc(sigLen);
-        if (!sig) {
-            std::cerr << "Error: Failed to allocate signature buffer" << std::endl;
-            EVP_MD_CTX_free(mdctx);
-            exit(1);
-        }
+        // allocate buffer to hold signature
+        std::vector<unsigned char> sigBuf(sigLen);
 
         // signing
-        if (EVP_DigestSign(mdctx, sig, &sigLen, txCopy.id.data(), txCopy.id.size()) <= 0) {
-            std::cerr << "Error: Failed to sign transaction" << std::endl;
-            OPENSSL_free(sig);
-            EVP_MD_CTX_free(mdctx);
-            exit(1);
+        if (EVP_DigestSign(mdctx.get(), sigBuf.data(), &sigLen, txCopy.id.data(),
+                           txCopy.id.size()) <= 0) {
+            throw std::runtime_error("Failed to sign transaction");
         }
 
-        std::vector<uint8_t> signature(sig, sig + sigLen);
-        OPENSSL_free(sig);
-        EVP_MD_CTX_free(mdctx);
+        std::vector<uint8_t> signature(sigBuf.data(), sigBuf.data() + sigLen);
 
         // Store signature in the actual transaction and not the copy
         this->vin[inID].signature = signature;
@@ -99,8 +91,7 @@ bool Transaction::Verify(const std::map<std::string, Transaction>& prevTXs) cons
     for (const auto& vin : vin) {
         std::string txID = ByteArrayToHexString(vin.GetTxid());
         if (prevTXs.find(txID) == prevTXs.end() || prevTXs.at(txID).GetID().empty()) {
-            std::cerr << "ERROR: Previous transaction is not correct" << std::endl;
-            exit(1);
+            throw std::runtime_error("Previous transaction is not correct");
         }
     }
 
@@ -121,17 +112,14 @@ bool Transaction::Verify(const std::map<std::string, Transaction>& prevTXs) cons
         const std::vector<uint8_t>& pubKeyBytes = vin[inID].GetPubKey();
 
         // create EVP_PKEY from public key bytes using fromdata
-        EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+        EVP_PKEY_CTX_ptr pctx(EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr),
+                              EVP_PKEY_CTX_free);
         if (!pctx) {
-            std::cerr << "Error: Failed to create context for public key" << std::endl;
-            return false;
+            throw std::runtime_error("Failed to create context for public key");
         }
 
-
-        if (EVP_PKEY_fromdata_init(pctx) <= 0) {
-            std::cerr << "Error: Failed to init fromdata" << std::endl;
-            EVP_PKEY_CTX_free(pctx);
-            return false;
+        if (EVP_PKEY_fromdata_init(pctx.get()) <= 0) {
+            throw std::runtime_error("Failed to init fromdata");
         }
 
         OSSL_PARAM params[3];
@@ -142,39 +130,28 @@ bool Transaction::Verify(const std::map<std::string, Transaction>& prevTXs) cons
         params[2] = OSSL_PARAM_construct_end();
 
         // calculate EVP_KEY for secp256k1 using the parameters
-        EVP_PKEY* pubKey = nullptr;
-        if (EVP_PKEY_fromdata(pctx, &pubKey, EVP_PKEY_PUBLIC_KEY, params) <= 0) {
-            std::cerr << "Error: Failed to create public key from bytes" << std::endl;
-            EVP_PKEY_CTX_free(pctx);
-            return false;
+        EVP_PKEY* rawPubKey = nullptr;
+        if (EVP_PKEY_fromdata(pctx.get(), &rawPubKey, EVP_PKEY_PUBLIC_KEY, params) <= 0) {
+            throw std::runtime_error("Failed to create public key from bytes");
         }
-
-        EVP_PKEY_CTX_free(pctx);
+        EVP_PKEY_ptr pubKey(rawPubKey, EVP_PKEY_free);
 
         // create context for verifying signature
-        EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+        EVP_MD_CTX_ptr mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
         if (!mdctx) {
-            std::cerr << "Error: Failed to create EVP_MD_CTX" << std::endl;
-            EVP_PKEY_free(pubKey);
-            return false;
+            throw std::runtime_error("Failed to create EVP_MD_CTX for verification");
         }
 
         const std::vector<uint8_t>& signature = vin[inID].GetSignature();
 
         // initialize the verification, setup verification with SHA256 and pub key
-        if (EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha256(), nullptr, pubKey) <= 0) {
-            std::cerr << "Error: Failed to initialize verification" << std::endl;
-            EVP_MD_CTX_free(mdctx);
-            EVP_PKEY_free(pubKey);
-            return false;
+        if (EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha256(), nullptr, pubKey.get()) <= 0) {
+            throw std::runtime_error("Failed to initialize verification");
         }
 
         // compare against actual signature
-        int result = EVP_DigestVerify(mdctx, signature.data(), signature.size(), txCopy.id.data(),
-                                      txCopy.id.size());
-
-        EVP_MD_CTX_free(mdctx);
-        EVP_PKEY_free(pubKey);
+        int result = EVP_DigestVerify(mdctx.get(), signature.data(), signature.size(),
+                                      txCopy.id.data(), txCopy.id.size());
 
         if (result != 1) {
             return false;
@@ -224,16 +201,14 @@ Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::
     Wallets wallets;
     Wallet* wallet = wallets.GetWallet(from);
     if (!wallet) {
-        std::cerr << "ERROR: Wallet not found for address: " << from << std::endl;
-        exit(1);
+        throw std::runtime_error("Wallet not found for address: " + from);
     }
 
     auto [acc, validOutputs] =
         bc->FindSpendableOutputs(Wallet::HashPubKey(wallet->GetPublicKey()), amount);
 
     if (acc < amount) {
-        std::cerr << "ERROR: Not enough funds" << std::endl;
-        exit(1);
+        throw std::runtime_error("Not enough funds");
     }
 
     // build a list of inputs
@@ -263,10 +238,7 @@ std::vector<uint8_t> Transaction::Serialize() const {
     std::vector<uint8_t> result;
 
     // number of inputs (4 bytes)
-    uint32_t vinCount = vin.size();
-    for (int i = 0; i < 4; i++) {
-        result.push_back((vinCount >> (8 * i)) & 0xFF);
-    }
+    WriteUint32(result, static_cast<uint32_t>(vin.size()));
 
     // each input
     for (const auto& input : vin) {
@@ -277,10 +249,7 @@ std::vector<uint8_t> Transaction::Serialize() const {
     }
 
     // number of outputs (4 bytes)
-    uint32_t voutSize = vout.size();
-    for (int i = 0; i < 4; i++) {
-        result.push_back((voutSize >> (8 * i)) & 0xFF);
-    }
+    WriteUint32(result, static_cast<uint32_t>(vout.size()));
 
     // each output
     for (const auto& output : vout) {
@@ -297,11 +266,12 @@ Transaction Transaction::Deserialize(const std::vector<uint8_t>& data) {
     Transaction tx;
     size_t offset = 0;
 
-    // number of inputs (4 bytes)
-    uint32_t vinSize = 0;
-    for (int i = 0; i < 4; i++) {
-        vinSize |= (data[offset + i] << (8 * i));
+    if (data.size() < 8) {
+        throw std::runtime_error("Transaction data too small to deserialize");
     }
+
+    // number of inputs (4 bytes)
+    uint32_t vinSize = ReadUint32(data, offset);
     offset += 4;
 
     // each input
@@ -314,18 +284,15 @@ Transaction Transaction::Deserialize(const std::vector<uint8_t>& data) {
     }
 
     // number of outputs (4 bytes)
-    uint32_t voutSize = 0;
-    for (int i = 0; i < 4; i++) {
-        voutSize |= (data[offset + i] << (8 * i));
-    }
+    uint32_t voutSize = ReadUint32(data, offset);
     offset += 4;
 
     // each output
     for (uint32_t i = 0; i < voutSize; i++) {
         auto [output, bytesRead] = TransactionOutput::Deserialize(data, offset);
-        tx.vout.push_back(output);
 
         // output (variable bytes)
+        tx.vout.push_back(output);
         offset += bytesRead;
     }
 

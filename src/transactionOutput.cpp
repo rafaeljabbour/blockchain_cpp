@@ -21,15 +21,10 @@ std::vector<uint8_t> TransactionOutput::Serialize() const {
     std::vector<uint8_t> result;
 
     // value (4 bytes)
-    for (int i = 0; i < 4; i++) {
-        result.push_back((value >> (8 * i)) & 0xFF);
-    }
+    WriteUint32(result, static_cast<uint32_t>(value));
 
     // pubKeyHash size (4 bytes)
-    uint32_t pubKeyHashSize = pubKeyHash.size();
-    for (int i = 0; i < 4; i++) {
-        result.push_back((pubKeyHashSize >> (8 * i)) & 0xFF);
-    }
+    WriteUint32(result, static_cast<uint32_t>(pubKeyHash.size()));
 
     // pubKeyHash (variable bytes)
     result.insert(result.end(), pubKeyHash.begin(), pubKeyHash.end());
@@ -43,20 +38,17 @@ std::pair<TransactionOutput, size_t> TransactionOutput::Deserialize(
     size_t startOffset = offset;
 
     // value (4 bytes)
-    output.value = 0;
-    for (int i = 0; i < 4; i++) {
-        output.value |= (data[offset + i] << (8 * i));
-    }
+    output.value = static_cast<int>(ReadUint32(data, offset));
     offset += 4;
 
     // pubKeyHash size (4 bytes)
-    uint32_t pubKeyHashSize = 0;
-    for (int i = 0; i < 4; i++) {
-        pubKeyHashSize |= (data[offset + i] << (8 * i));
-    }
+    uint32_t pubKeyHashSize = ReadUint32(data, offset);
     offset += 4;
 
     // pubKeyHash (variable bytes)
+    if (offset + pubKeyHashSize > data.size()) {
+        throw std::runtime_error("TransactionOutput data truncated at pubKeyHash");
+    }
     output.pubKeyHash =
         std::vector<uint8_t>(data.begin() + offset, data.begin() + offset + pubKeyHashSize);
     offset += pubKeyHashSize;

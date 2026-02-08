@@ -1,13 +1,12 @@
 #include "blockchainIterator.h"
 
-#include <iostream>
 #include <vector>
 
 #include "block.h"
 #include "utils.h"
 
 BlockchainIterator::BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db)
-    : currentHash(tip), db(db) {};
+    : currentHash(std::move(tip)), db(db) {}
 
 Block BlockchainIterator::Next() {
     std::string serializedBlock;
@@ -15,8 +14,7 @@ Block BlockchainIterator::Next() {
     leveldb::Status status =
         db->Get(leveldb::ReadOptions(), ByteArrayToSlice(currentHash), &serializedBlock);
     if (!status.ok()) {
-        std::cerr << "Error reading block: " << status.ToString() << std::endl;
-        throw std::runtime_error("Failed to read block from database");
+        throw std::runtime_error("Failed to read block from database: " + status.ToString());
     }
 
     std::vector<uint8_t> data(serializedBlock.begin(), serializedBlock.end());

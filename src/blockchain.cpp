@@ -1,8 +1,9 @@
 #include "blockchain.h"
 
 #include <leveldb/iterator.h>
-#include <leveldb/write_batch.h>  // for atomic updates
+#include <leveldb/write_batch.h>
 
+#include <filesystem>
 #include <iostream>
 
 #include "blockchainIterator.h"
@@ -10,56 +11,57 @@
 #include "wallet.h"
 
 bool Blockchain::DBExists() {
-    leveldb::DB* db;
+    leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &db);
+    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
+    std::unique_ptr<leveldb::DB> db(rawDb);
 
-    if (status.ok()) {
-        delete db;
-        return true;
-    }
-    return false;
+    return status.ok();
 }
 
 Blockchain::Blockchain() {
     if (!DBExists()) {
-        std::cerr << "No existing blockchain found. Create one first." << std::endl;
-        exit(1);
+        throw std::runtime_error("No existing blockchain found. Create one first.");
     }
 
+    leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &db);
+    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
 
     if (!status.ok()) {
-        std::cerr << "Error opening database: " << status.ToString() << std::endl;
-        exit(1);
+        throw std::runtime_error("Error opening database: " + status.ToString());
     }
+
+    db.reset(rawDb);
 
     std::string tipString;
     status = db->Get(leveldb::ReadOptions(), "l", &tipString);
-    if (status.ok()) {
-        tip = std::vector<uint8_t>(tipString.begin(), tipString.end());
-    } else {
-        std::cerr << "Error reading tip: " << status.ToString() << std::endl;
-        exit(1);
+    if (!status.ok()) {
+        throw std::runtime_error("Error reading tip: " + status.ToString());
     }
+
+    tip = std::vector<uint8_t>(tipString.begin(), tipString.end());
 }
 
 std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& address) {
     if (DBExists()) {
-        std::cerr << "Blockchain already exists." << std::endl;
-        exit(1);
+        throw std::runtime_error("Blockchain already exists.");
     }
 
-    leveldb::DB* db;
+    // ensure parent directory exists
+    std::filesystem::create_directories(std::filesystem::path(DB_FILE).parent_path());
+
+    leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
     options.create_if_missing = true;
 
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &db);
+    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
     if (!status.ok()) {
-        std::cerr << "Error creating database: " << status.ToString() << std::endl;
-        exit(1);
+        throw std::runtime_error("Error creating database: " + status.ToString());
     }
+
+    // RAII wrap
+    std::unique_ptr<leveldb::DB> tempDb(rawDb);
 
     Transaction cbtx = Transaction::NewCoinbaseTX(address, GENESIS_COINBASE_DATA);
     Block genesis = Block::NewGenesisBlock(cbtx);
@@ -68,30 +70,27 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     std::vector<uint8_t> serialized = genesis.Serialize();
 
     leveldb::WriteBatch batch;
-
     batch.Put(ByteArrayToSlice(genesisHash), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(genesisHash));
 
-    status = db->Write(leveldb::WriteOptions(), &batch);
+    status = tempDb->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
-        std::cerr << "Error writing genesis block: " << status.ToString() << std::endl;
-        exit(1);
+        throw std::runtime_error("Error writing genesis block: " + status.ToString());
     }
-    delete db;
+
+    // release the temp DB before constructing Blockchain, the blockchain opens it's own
+    tempDb.reset();
 
     std::cout << "Genesis block created for address: " << address << std::endl;
 
     return std::make_unique<Blockchain>();
 }
 
-Blockchain::~Blockchain() { delete db; }
-
 void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     // verify all transactions before mining
     for (const Transaction& tx : transactions) {
         if (!VerifyTransaction(&tx)) {
-            std::cerr << "ERROR: Invalid transaction" << std::endl;
-            exit(1);
+            throw std::runtime_error("Invalid transaction");
         }
     }
 
@@ -99,8 +98,7 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     leveldb::Status status = db->Get(leveldb::ReadOptions(), "l", &lastHashString);
 
     if (!status.ok()) {
-        std::cerr << "Error reading last hash: " << status.ToString() << std::endl;
-        exit(1);
+        throw std::runtime_error("Error reading last hash: " + status.ToString());
     }
 
     std::vector<uint8_t> lastHash(lastHashString.begin(), lastHashString.end());
@@ -116,8 +114,7 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     status = db->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
-        std::cerr << "Error writing block: " << status.ToString() << std::endl;
-        exit(1);
+        throw std::runtime_error("Error writing block: " + status.ToString());
     }
 
     tip = newHash;
@@ -226,8 +223,7 @@ Transaction Blockchain::FindTransaction(const std::vector<uint8_t>& ID) {
         }
     }
 
-    std::cerr << "Error: Transaction not found" << std::endl;
-    exit(1);
+    throw std::runtime_error("Transaction not found");
 }
 
 void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
@@ -239,7 +235,7 @@ void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
         prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
-    tx->Sign(wallet->privateKey, prevTXs);
+    tx->Sign(wallet->privateKey.get(), prevTXs);
 }
 
 bool Blockchain::VerifyTransaction(const Transaction* tx) {
@@ -258,4 +254,4 @@ bool Blockchain::VerifyTransaction(const Transaction* tx) {
     return tx->Verify(prevTXs);
 }
 
-BlockchainIterator Blockchain::Iterator() { return BlockchainIterator(tip, db); }
+BlockchainIterator Blockchain::Iterator() { return BlockchainIterator(tip, db.get()); }

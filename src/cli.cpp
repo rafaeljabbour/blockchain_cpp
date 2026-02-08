@@ -1,6 +1,5 @@
 #include "cli.h"
 
-#include <cstdio>
 #include <ctime>
 #include <iostream>
 
@@ -26,8 +25,7 @@ void CLI::printUsage() {
 
 void CLI::createBlockchain(const std::string& address) {
     if (!Wallet::ValidateAddress(address)) {
-        std::cerr << "Error: Invalid address" << std::endl;
-        exit(1);
+        throw std::runtime_error("Invalid address");
     }
 
     auto bc = Blockchain::CreateBlockchain(address);
@@ -44,8 +42,7 @@ void CLI::createWallet() {
 
 void CLI::getBalance(const std::string& address) {
     if (!Wallet::ValidateAddress(address)) {
-        std::cerr << "Error: Invalid address" << std::endl;
-        exit(1);
+        throw std::runtime_error("Invalid address");
     }
 
     Blockchain bc;
@@ -81,13 +78,11 @@ void CLI::listAddresses() {
 
 void CLI::send(const std::string& from, const std::string& to, int amount) {
     if (!Wallet::ValidateAddress(from)) {
-        std::cerr << "Error: Invalid sender address" << std::endl;
-        exit(1);
+        throw std::runtime_error("Invalid sender address");
     }
 
     if (!Wallet::ValidateAddress(to)) {
-        std::cerr << "Error: Invalid recipient address" << std::endl;
-        exit(1);
+        throw std::runtime_error("Invalid recipient address");
     }
 
     Blockchain bc;
@@ -172,6 +167,7 @@ void CLI::run(int argc, char* argv[]) {
         printUsage();
     }
 }
+
 void CLI::printChain() {
     Blockchain bc;
     BlockchainIterator bci = bc.Iterator();

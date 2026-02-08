@@ -4,6 +4,7 @@
 #include <openssl/bn.h>
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -12,14 +13,22 @@
 const int32_t targetBits = 17;
 const int32_t maxNonce = INT32_MAX;
 
+// RAII type alias for BIGNUM
+using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
+
 class ProofOfWork {
     private:
         const Block* block;
-        BIGNUM* target;  // upperbound for valid hash value
+        BN_ptr target;  // upperbound for valid hash value
 
     public:
         ProofOfWork(const Block* block);
-        ~ProofOfWork();
+        ~ProofOfWork() = default;
+
+        // prevent copying
+        ProofOfWork(const ProofOfWork&) = delete;
+        ProofOfWork& operator=(const ProofOfWork&) = delete;
+
         std::pair<int32_t, std::vector<uint8_t>> Run();
         bool Validate();
 
