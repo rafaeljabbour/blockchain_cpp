@@ -151,7 +151,8 @@ Wallet::Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8
     OSSL_PARAM params[3];
     params[0] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
                                                  const_cast<char*>("secp256k1"), 0);
-    params[1] = OSSL_PARAM_construct_octet_string(
+    // store the private key as a parameter (bignum)
+    params[1] = OSSL_PARAM_construct_BN(
         OSSL_PKEY_PARAM_PRIV_KEY, const_cast<uint8_t*>(privKeyBytes.data()), privKeyBytes.size());
     params[2] = OSSL_PARAM_construct_end();
 
