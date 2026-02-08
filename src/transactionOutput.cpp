@@ -1,6 +1,7 @@
 #include "transactionOutput.h"
 
 #include "base58.h"
+#include "utils.h"
 #include "wallet.h"
 
 TransactionOutput::TransactionOutput(int value, const std::vector<uint8_t>& pubKeyHash)
@@ -62,4 +63,11 @@ std::pair<TransactionOutput, size_t> TransactionOutput::Deserialize(
 
     size_t bytesRead = offset - startOffset;
     return {output, bytesRead};
+}
+
+// factory function to create a new transaction output
+TransactionOutput NewTXOutput(int value, const std::string& address) {
+    TransactionOutput txo(value, {});
+    txo.Lock(StringToBytes(address));
+    return txo;
 }

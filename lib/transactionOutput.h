@@ -27,4 +27,7 @@ class TransactionOutput {
                                                                 size_t offset);
 };
 
+// factory function to make object creation easier
+TransactionOutput NewTXOutput(int value, const std::string& address);
+
 #endif
