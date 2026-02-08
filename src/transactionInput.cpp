@@ -1,11 +1,15 @@
 #include "transactionInput.h"
 
-TransactionInput::TransactionInput(const std::vector<uint8_t>& txid, int vout,
-                                   const std::string& scriptSig)
-    : txid(txid), vout(vout), scriptSig(scriptSig) {}
+#include "wallet.h"
 
-bool TransactionInput::CanUnlockOutputWith(const std::string& unlockingData) const {
-    return scriptSig == unlockingData;
+TransactionInput::TransactionInput(const std::vector<uint8_t>& txid, int vout,
+                                   const std::vector<uint8_t>& signature,
+                                   const std::vector<uint8_t>& pubKey)
+    : txid(txid), vout(vout), signature(signature), pubKey(pubKey) {}
+
+bool TransactionInput::UsesKey(const std::vector<uint8_t>& pubKeyHash) const {
+    std::vector<uint8_t> lockingHash = Wallet::HashPubKey(pubKey);
+    return lockingHash == pubKeyHash;
 }
 
 std::vector<uint8_t> TransactionInput::Serialize() const {
@@ -24,15 +28,23 @@ std::vector<uint8_t> TransactionInput::Serialize() const {
     for (int i = 0; i < 4; i++) {
         result.push_back((vout >> (8 * i)) & 0xFF);
     }
-
-    // scriptSig size (4 bytes)
-    uint32_t scriptSigSize = scriptSig.size();
+    // signature size (4 bytes)
+    uint32_t signatureSize = signature.size();
     for (int i = 0; i < 4; i++) {
-        result.push_back((scriptSigSize >> (8 * i)) & 0xFF);
+        result.push_back((signatureSize >> (8 * i)) & 0xFF);
     }
 
-    // scriptSig
-    result.insert(result.end(), scriptSig.begin(), scriptSig.end());
+    // signature (variable bytes)
+    result.insert(result.end(), signature.begin(), signature.end());
+
+    // pubKey size (4 bytes)
+    uint32_t pubKeySize = pubKey.size();
+    for (int i = 0; i < 4; i++) {
+        result.push_back((pubKeySize >> (8 * i)) & 0xFF);
+    }
+
+    // pubKey (variable bytes)
+    result.insert(result.end(), pubKey.begin(), pubKey.end());
 
     return result;
 }
@@ -60,16 +72,28 @@ std::pair<TransactionInput, size_t> TransactionInput::Deserialize(const std::vec
     }
     offset += 4;
 
-    // scriptSig size (4 bytes)
-    uint32_t scriptSigSize = 0;
+    // signature size (4 bytes)
+    uint32_t signatureSize = 0;
     for (int i = 0; i < 4; i++) {
-        scriptSigSize |= (data[offset + i] << (8 * i));
+        signatureSize |= (data[offset + i] << (8 * i));
     }
     offset += 4;
 
-    // scriptSig
-    input.scriptSig = std::string(data.begin() + offset, data.begin() + offset + scriptSigSize);
-    offset += scriptSigSize;
+    // signature (variable bytes)
+    input.signature =
+        std::vector<uint8_t>(data.begin() + offset, data.begin() + offset + signatureSize);
+    offset += signatureSize;
+
+    // pubKey size (4 bytes)
+    uint32_t pubKeySize = 0;
+    for (int i = 0; i < 4; i++) {
+        pubKeySize |= (data[offset + i] << (8 * i));
+    }
+    offset += 4;
+
+    // pubKey (variable bytes)
+    input.pubKey = std::vector<uint8_t>(data.begin() + offset, data.begin() + offset + pubKeySize);
+    offset += pubKeySize;
 
     size_t bytesRead = offset - startOffset;
     return {input, bytesRead};
