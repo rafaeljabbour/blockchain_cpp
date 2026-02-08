@@ -1,5 +1,6 @@
 #include "wallet.h"
 
+#include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
@@ -134,7 +135,7 @@ std::vector<uint8_t> Wallet::Checksum(const std::vector<uint8_t>& payload) {
 
 Wallet::Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8_t>& pubKeyBytes)
     : privateKey(nullptr), publicKey(pubKeyBytes) {
-    // we reconstruct private key from bytes using OpenSSL
+    // we reconstruct private key from bytes using OpenSSL library
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
     if (!ctx) {
         std::cerr << "Error: Failed to create EVP_PKEY_CTX for deserialization" << std::endl;
@@ -164,20 +165,22 @@ Wallet::Wallet(const std::vector<uint8_t>& privKeyBytes, const std::vector<uint8
 }
 
 std::vector<uint8_t> Wallet::GetPrivateKeyBytes() const {
-    size_t privKeyLen = 0;
+    BIGNUM* privKeyBN = nullptr;
 
-    // get the length of the private key
-    if (EVP_PKEY_get_octet_string_param(privateKey, OSSL_PKEY_PARAM_PRIV_KEY, nullptr, 0,
-                                        &privKeyLen) <= 0) {
-        std::cerr << "Error: Failed to get private key length" << std::endl;
+    // get private key as BIGNUM
+    if (EVP_PKEY_get_bn_param(privateKey, OSSL_PKEY_PARAM_PRIV_KEY, &privKeyBN) <= 0) {
+        std::cerr << "Error: Failed to get private key" << std::endl;
         exit(1);
     }
 
-    // extract the private key from container
-    std::vector<uint8_t> privKey(privKeyLen);
-    if (EVP_PKEY_get_octet_string_param(privateKey, OSSL_PKEY_PARAM_PRIV_KEY, privKey.data(),
-                                        privKeyLen, nullptr) <= 0) {
-        std::cerr << "Error: Failed to extract private key bytes" << std::endl;
+    // convert BIGNUM to bytes (32 bytes for secp256k1)
+    std::vector<uint8_t> privKey(32);
+    int numBytes = BN_bn2binpad(privKeyBN, privKey.data(), 32);
+
+    BN_free(privKeyBN);
+
+    if (numBytes != 32) {
+        std::cerr << "Error: Private key has wrong size" << std::endl;
         exit(1);
     }
 
