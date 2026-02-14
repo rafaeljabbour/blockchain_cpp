@@ -4,6 +4,7 @@
 #include <ctime>
 #include <vector>
 
+#include "merkleTree.h"
 #include "proofOfWork.h"
 #include "utils.h"
 
@@ -108,14 +109,8 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
 }
 
 std::vector<uint8_t> Block::HashTransactions() const {
-    std::vector<uint8_t> txHashes;
-
-    for (const Transaction& tx : transactions) {
-        std::vector<uint8_t> txHash = tx.Hash();
-        txHashes.insert(txHashes.end(), txHash.begin(), txHash.end());
-    }
-
-    return SHA256Hash(txHashes);
+    MerkleTree tree(transactions);
+    return tree.GetRootHash();
 }
 
 Block Block::NewGenesisBlock(const Transaction& coinbase) {
