@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include "blockchainIterator.h"
+#include "transactionOutput.h"
 #include "utils.h"
 #include "wallet.h"
 
@@ -91,7 +92,7 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     return std::make_unique<Blockchain>();
 }
 
-void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
+Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     // verify all transactions before mining
     for (const Transaction& tx : transactions) {
         if (!VerifyTransaction(&tx)) {
@@ -110,16 +111,16 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     Block newBlock(transactions, lastHash);
 
+    std::vector<uint8_t> blockKey;
+    // prefix for the Block
+    blockKey.push_back('b');
     std::vector<uint8_t> newHash = newBlock.GetHash();
+    blockKey.insert(blockKey.end(), newHash.begin(), newHash.end());
+
     std::vector<uint8_t> serialized = newBlock.Serialize();
 
-    std::vector<uint8_t> key;
-    // prefix for the Block
-    key.push_back('b');
-    key.insert(key.end(), newHash.begin(), newHash.end());
-
     leveldb::WriteBatch batch;
-    batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
+    batch.Put(ByteArrayToSlice(blockKey), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(newHash));
 
     status = db->Write(leveldb::WriteOptions(), &batch);
@@ -128,11 +129,11 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     }
 
     tip = newHash;
+    return newBlock;
 }
 
-std::vector<Transaction> Blockchain::FindUnspentTransactions(
-    const std::vector<uint8_t>& pubKeyHash) {
-    std::vector<Transaction> unspentTXs;
+std::map<std::string, TXOutputs> Blockchain::FindUTXO() {
+    std::map<std::string, TXOutputs> UTXO;
     std::map<std::string, std::vector<int>> spentTXOs;
     BlockchainIterator bci = Iterator();
 
@@ -141,6 +142,7 @@ std::vector<Transaction> Blockchain::FindUnspentTransactions(
 
         for (const Transaction& tx : block.GetTransactions()) {
             std::string txID = ByteArrayToHexString(tx.GetID());
+            TXOutputs outs;
 
             for (size_t outIdx = 0; outIdx < tx.GetVout().size(); outIdx++) {
                 const TransactionOutput& out = tx.GetVout()[outIdx];
@@ -154,70 +156,27 @@ std::vector<Transaction> Blockchain::FindUnspentTransactions(
                             break;
                         }
                     }
-                    if (wasSpent) continue;
+                    if (!wasSpent) {
+                        outs.outputs.push_back(out);
+                    }
                 }
+            }
 
-                if (out.IsLockedWithKey(pubKeyHash)) {
-                    unspentTXs.push_back(tx);
-                }
+            if (!outs.outputs.empty()) {
+                UTXO[txID] = outs;
             }
 
             // gather spent outputs
             if (!tx.IsCoinbase()) {
                 for (const TransactionInput& in : tx.GetVin()) {
-                    if (in.UsesKey(pubKeyHash)) {
-                        std::string inTxID = ByteArrayToHexString(in.GetTxid());
-                        spentTXOs[inTxID].push_back(in.GetVout());
-                    }
+                    std::string inputTxID = ByteArrayToHexString(in.GetTxid());
+                    spentTXOs[inputTxID].push_back(in.GetVout());
                 }
             }
         }
     }
 
-    return unspentTXs;
-}
-
-std::vector<TransactionOutput> Blockchain::FindUTXO(const std::vector<uint8_t>& pubKeyHash) {
-    std::vector<TransactionOutput> UTXOs;
-    std::vector<Transaction> unspentTransactions = FindUnspentTransactions(pubKeyHash);
-
-    for (const Transaction& tx : unspentTransactions) {
-        for (const TransactionOutput& out : tx.GetVout()) {
-            if (out.IsLockedWithKey(pubKeyHash)) {
-                UTXOs.push_back(out);
-            }
-        }
-    }
-
-    return UTXOs;
-}
-
-std::pair<int, std::map<std::string, std::vector<int>>> Blockchain::FindSpendableOutputs(
-    const std::vector<uint8_t>& pubKeyHash, int amount) {
-    std::map<std::string, std::vector<int>> unspentOutputs;
-    std::vector<Transaction> unspentTXs = FindUnspentTransactions(pubKeyHash);
-    int accumulated = 0;
-
-    for (const Transaction& tx : unspentTXs) {
-        std::string txID = ByteArrayToHexString(tx.GetID());
-
-        for (size_t outIdx = 0; outIdx < tx.GetVout().size(); outIdx++) {
-            const TransactionOutput& out = tx.GetVout()[outIdx];
-
-            if (out.IsLockedWithKey(pubKeyHash) && accumulated < amount) {
-                accumulated += out.GetValue();
-                unspentOutputs[txID].push_back(outIdx);
-
-                if (accumulated >= amount) {
-                    // to break out of the nested loops
-                    goto Done;
-                }
-            }
-        }
-    }
-
-Done:
-    return {accumulated, unspentOutputs};
+    return UTXO;
 }
 
 Transaction Blockchain::FindTransaction(const std::vector<uint8_t>& ID) {

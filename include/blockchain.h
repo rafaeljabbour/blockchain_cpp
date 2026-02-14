@@ -36,12 +36,9 @@ class Blockchain {
         Blockchain(const Blockchain&) = delete;
         Blockchain& operator=(const Blockchain&) = delete;
 
-        void MineBlock(const std::vector<Transaction>& transactions);
+        Block MineBlock(const std::vector<Transaction>& transactions);
 
-        std::vector<Transaction> FindUnspentTransactions(const std::vector<uint8_t>& pubKeyHash);
-        std::vector<TransactionOutput> FindUTXO(const std::vector<uint8_t>& pubKeyHash);
-        std::pair<int, std::map<std::string, std::vector<int>>> FindSpendableOutputs(
-            const std::vector<uint8_t>& pubKeyHash, int amount);
+        std::map<std::string, TXOutputs> FindUTXO();
 
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
         void SignTransaction(Transaction* tx, Wallet* wallet);

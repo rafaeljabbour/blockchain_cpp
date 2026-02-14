@@ -8,6 +8,7 @@
 #include "blockchainIterator.h"
 #include "proofOfWork.h"
 #include "utils.h"
+#include "utxoSet.h"
 #include "wallet.h"
 #include "wallets.h"
 
@@ -19,6 +20,7 @@ void CLI::printUsage() {
     std::cout << "  getbalance -address ADDRESS - Get balance of ADDRESS\n";
     std::cout << "  listaddresses - List all addresses from the wallet file\n";
     std::cout << "  printchain - Print all the blocks of the blockchain\n";
+    std::cout << "  reindexutxo - Rebuilds the UTXO set\n";
     std::cout << "  send -from FROM -to TO -amount AMOUNT - Send AMOUNT of coins from FROM address "
                  "to TO\n";
 }
@@ -29,6 +31,10 @@ void CLI::createBlockchain(const std::string& address) {
     }
 
     auto bc = Blockchain::CreateBlockchain(address);
+
+    UTXOSet utxoSet(bc.get());
+    utxoSet.Reindex();
+
     std::cout << "Done!" << std::endl;
 }
 
@@ -46,19 +52,29 @@ void CLI::getBalance(const std::string& address) {
     }
 
     Blockchain bc;
+    UTXOSet utxoSet(&bc);
 
     // decode address to get pubKeyHash
     std::vector<uint8_t> decoded = Base58DecodeStr(address);
     std::vector<uint8_t> pubKeyHash(decoded.begin() + 1, decoded.end() - ADDRESS_CHECKSUM_LEN);
 
     int balance = 0;
-    std::vector<TransactionOutput> UTXOs = bc.FindUTXO(pubKeyHash);
+    std::vector<TransactionOutput> UTXOs = utxoSet.FindUTXO(pubKeyHash);
 
     for (const TransactionOutput& out : UTXOs) {
         balance += out.GetValue();
     }
 
     std::cout << "Balance of '" << address << "': " << balance << std::endl;
+}
+
+void CLI::reindexUTXO() {
+    Blockchain bc;
+    UTXOSet utxoSet(&bc);
+    utxoSet.Reindex();
+
+    int count = utxoSet.CountTransactions();
+    std::cout << "Done! There are " << count << " transactions in the UTXO set." << std::endl;
 }
 
 void CLI::listAddresses() {
@@ -86,9 +102,19 @@ void CLI::send(const std::string& from, const std::string& to, int amount) {
     }
 
     Blockchain bc;
+    UTXOSet utxoSet(&bc);
 
-    Transaction tx = Transaction::NewUTXOTransaction(from, to, amount, &bc);
-    bc.MineBlock({tx});
+    // create the transaction
+    Transaction tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
+
+    // mining reward for the sender
+    Transaction coinbaseTx = Transaction::NewCoinbaseTX(from, "");
+
+    // mine the block with both transactions
+    std::vector<Transaction> txs = {coinbaseTx, tx};
+    Block newBlock = bc.MineBlock(txs);
+
+    utxoSet.Update(newBlock);
 
     std::cout << "Success!" << std::endl;
 }
@@ -123,6 +149,8 @@ void CLI::run(int argc, char* argv[]) {
         listAddresses();
     } else if (command == "printchain") {
         printChain();
+    } else if (command == "reindexutxo") {
+        reindexUTXO();
     } else if (command == "send") {
         if (argc < 8) {
             std::cout << "Error: send requires -from, -to, and -amount flags\n";
