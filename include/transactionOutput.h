@@ -27,6 +27,14 @@ class TransactionOutput {
                                                                 size_t offset);
 };
 
+// struct to store multiple outputs, under a single transaction ID in the db
+struct TXOutputs {
+        std::vector<TransactionOutput> outputs;
+
+        std::vector<uint8_t> Serialize() const;
+        static TXOutputs Deserialize(const std::vector<uint8_t>& data);
+};
+
 // factory function to make object creation easier
 TransactionOutput NewTXOutput(int value, const std::string& address);
 

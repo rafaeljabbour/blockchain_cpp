@@ -63,3 +63,40 @@ TransactionOutput NewTXOutput(int value, const std::string& address) {
     txo.Lock(StringToBytes(address));
     return txo;
 }
+
+std::vector<uint8_t> TXOutputs::Serialize() const {
+    std::vector<uint8_t> result;
+
+    // number of outputs (4 bytes)
+    WriteUint32(result, static_cast<uint32_t>(outputs.size()));
+
+    // each output
+    for (const auto& output : outputs) {
+        std::vector<uint8_t> outputSerialized = output.Serialize();
+        result.insert(result.end(), outputSerialized.begin(), outputSerialized.end());
+    }
+
+    return result;
+}
+
+TXOutputs TXOutputs::Deserialize(const std::vector<uint8_t>& data) {
+    TXOutputs txOutputs;
+    size_t offset = 0;
+
+    if (data.size() < 4) {
+        throw std::runtime_error("TXOutputs data too small to deserialize");
+    }
+
+    // number of outputs (4 bytes)
+    uint32_t outputCount = ReadUint32(data, offset);
+    offset += 4;
+
+    // each output
+    for (uint32_t i = 0; i < outputCount; i++) {
+        auto [output, bytesRead] = TransactionOutput::Deserialize(data, offset);
+        txOutputs.outputs.push_back(output);
+        offset += bytesRead;
+    }
+
+    return txOutputs;
+}

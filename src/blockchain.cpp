@@ -69,8 +69,13 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     std::vector<uint8_t> genesisHash = genesis.GetHash();
     std::vector<uint8_t> serialized = genesis.Serialize();
 
+    std::vector<uint8_t> key;
+    // prefix for the Block
+    key.push_back('b');
+    key.insert(key.end(), genesisHash.begin(), genesisHash.end());
+
     leveldb::WriteBatch batch;
-    batch.Put(ByteArrayToSlice(genesisHash), ByteArrayToSlice(serialized));
+    batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(genesisHash));
 
     status = tempDb->Write(leveldb::WriteOptions(), &batch);
@@ -108,8 +113,13 @@ void Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     std::vector<uint8_t> newHash = newBlock.GetHash();
     std::vector<uint8_t> serialized = newBlock.Serialize();
 
+    std::vector<uint8_t> key;
+    // prefix for the Block
+    key.push_back('b');
+    key.insert(key.end(), newHash.begin(), newHash.end());
+
     leveldb::WriteBatch batch;
-    batch.Put(ByteArrayToSlice(newHash), ByteArrayToSlice(serialized));
+    batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(newHash));
 
     status = db->Write(leveldb::WriteOptions(), &batch);

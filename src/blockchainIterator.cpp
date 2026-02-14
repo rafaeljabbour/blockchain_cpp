@@ -9,10 +9,15 @@ BlockchainIterator::BlockchainIterator(std::vector<uint8_t> tip, leveldb::DB* db
     : currentHash(std::move(tip)), db(db) {}
 
 Block BlockchainIterator::Next() {
+    std::vector<uint8_t> key;
+    // prefix of a block
+    key.push_back('b');
+    key.insert(key.end(), currentHash.begin(), currentHash.end());
+
     std::string serializedBlock;
 
     leveldb::Status status =
-        db->Get(leveldb::ReadOptions(), ByteArrayToSlice(currentHash), &serializedBlock);
+        db->Get(leveldb::ReadOptions(), ByteArrayToSlice(key), &serializedBlock);
     if (!status.ok()) {
         throw std::runtime_error("Failed to read block from database: " + status.ToString());
     }

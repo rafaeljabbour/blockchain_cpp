@@ -5,9 +5,11 @@
 #include <openssl/params.h>
 
 #include <memory>
+#include <random>
 
 #include "blockchain.h"
 #include "utils.h"
+#include "utxoSet.h"
 #include "wallet.h"
 #include "wallets.h"
 
@@ -180,7 +182,18 @@ Transaction Transaction::TrimmedCopy() const {
 Transaction Transaction::NewCoinbaseTX(const std::string& to, const std::string& data) {
     std::string coinbaseData = data;
     if (coinbaseData.empty()) {
-        coinbaseData = "Reward to '" + to + "'";
+        // random data for uniqueness and privacy
+        std::vector<uint8_t> randData(20);
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 255);
+
+        for (auto& byte : randData) {
+            byte = static_cast<uint8_t>(dis(gen));
+        }
+
+        coinbaseData = ByteArrayToHexString(randData);
     }
 
     TransactionInput txin({}, -1, {}, StringToBytes(coinbaseData));
@@ -193,7 +206,7 @@ Transaction Transaction::NewCoinbaseTX(const std::string& to, const std::string&
 }
 
 Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::string& to,
-                                            int amount, Blockchain* bc) {
+                                            int amount, UTXOSet* utxoSet) {
     std::vector<TransactionInput> inputs;
     std::vector<TransactionOutput> outputs;
 
@@ -205,7 +218,7 @@ Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::
     }
 
     auto [acc, validOutputs] =
-        bc->FindSpendableOutputs(Wallet::HashPubKey(wallet->GetPublicKey()), amount);
+        utxoSet->FindSpendableOutputs(Wallet::HashPubKey(wallet->GetPublicKey()), amount);
 
     if (acc < amount) {
         throw std::runtime_error("Not enough funds");
@@ -229,7 +242,7 @@ Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::
 
     Transaction tx({}, inputs, outputs);
     tx.id = tx.Hash();
-    bc->SignTransaction(&tx, wallet);
+    utxoSet->blockchain->SignTransaction(&tx, wallet);
 
     return tx;
 }
