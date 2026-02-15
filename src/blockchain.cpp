@@ -147,18 +147,18 @@ std::map<std::string, TXOutputs> Blockchain::FindUTXO() {
             for (size_t outIdx = 0; outIdx < tx.GetVout().size(); outIdx++) {
                 const TransactionOutput& out = tx.GetVout()[outIdx];
 
+                bool wasSpent = false;
                 // check if the output was spent
                 if (spentTXOs.count(txID)) {
-                    bool wasSpent = false;
                     for (int spentOutIdx : spentTXOs[txID]) {
                         if (spentOutIdx == static_cast<int>(outIdx)) {
                             wasSpent = true;
                             break;
                         }
                     }
-                    if (!wasSpent) {
-                        outs.outputs.push_back(out);
-                    }
+                }
+                if (!wasSpent) {
+                    outs.outputs.push_back(out);
                 }
             }
 

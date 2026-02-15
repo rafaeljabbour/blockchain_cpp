@@ -237,12 +237,13 @@ Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::
     // build a list of outputs
     outputs.push_back(NewTXOutput(amount, to));
     if (acc > amount) {
-        outputs.push_back(NewTXOutput(acc - amount, from));  // change
+        outputs.push_back(NewTXOutput(acc - amount, from));
     }
 
     Transaction tx({}, inputs, outputs);
     tx.id = tx.Hash();
     utxoSet->blockchain->SignTransaction(&tx, wallet);
+    tx.id = tx.Hash();
 
     return tx;
 }

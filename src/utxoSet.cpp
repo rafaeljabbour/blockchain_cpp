@@ -31,7 +31,7 @@ std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOu
             continue;
         }
 
-        std::string txID = ByteArrayToHexString(std::vector<uint8_t>(key.begin(), key.end()));
+        std::string txID = ByteArrayToHexString(std::vector<uint8_t>(key.begin() + 1, key.end()));
 
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);

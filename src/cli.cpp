@@ -35,7 +35,8 @@ void CLI::createBlockchain(const std::string& address) {
     UTXOSet utxoSet(bc.get());
     utxoSet.Reindex();
 
-    std::cout << "Done!" << std::endl;
+    std::cout << "Done! There are " << utxoSet.CountTransactions()
+              << " transactions in the UTXO set." << std::endl;
 }
 
 void CLI::createWallet() {
