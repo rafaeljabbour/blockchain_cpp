@@ -19,6 +19,10 @@ MerkleNode::MerkleNode(std::unique_ptr<MerkleNode> left, std::unique_ptr<MerkleN
     this->data = SHA256Hash(combined);
 }
 
+// pre-hashed node constructor (for duplicating at intermediate levels)
+MerkleNode::MerkleNode(const std::vector<uint8_t>& hash, PreHashed)
+    : left(nullptr), right(nullptr), data(hash) {}
+
 // tree constructor
 MerkleTree::MerkleTree(const std::vector<Transaction>& transactions) {
     // serialized transactions
@@ -40,6 +44,12 @@ MerkleTree::MerkleTree(const std::vector<Transaction>& transactions) {
 
     // construct tree bottom-up
     while (nodes.size() > 1) {
+        // duplicate last node if odd count
+        if (nodes.size() % 2 != 0) {
+            nodes.push_back(
+                std::make_unique<MerkleNode>(nodes.back()->data, MerkleNode::PreHashed{}));
+        }
+
         std::vector<std::unique_ptr<MerkleNode>> newLevel;
 
         for (size_t i = 0; i < nodes.size(); i += 2) {

@@ -158,7 +158,7 @@ std::map<std::string, TXOutputs> Blockchain::FindUTXO() {
                     }
                 }
                 if (!wasSpent) {
-                    outs.outputs.push_back(out);
+                    outs.outputs[static_cast<int>(outIdx)] = out;
                 }
             }
 

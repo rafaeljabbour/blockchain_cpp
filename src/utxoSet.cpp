@@ -19,10 +19,11 @@ std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOu
     const std::vector<uint8_t>& pubKeyHash, int amount) {
     std::map<std::string, std::vector<int>> unspentOutputs;
     int accumulated = 0;
+    bool found = false;
 
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
 
-    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    for (it->SeekToFirst(); it->Valid() && !found; it->Next()) {
         std::string key = it->key().ToString();
         std::string value = it->value().ToString();
 
@@ -36,22 +37,19 @@ std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOu
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
 
-        for (size_t outIdx = 0; outIdx < outs.outputs.size(); outIdx++) {
-            const TransactionOutput& out = outs.outputs[outIdx];
-
+        for (const auto& [origIdx, out] : outs.outputs) {
             if (out.IsLockedWithKey(pubKeyHash) && accumulated < amount) {
                 accumulated += out.GetValue();
-                unspentOutputs[txID].push_back(outIdx);
+                unspentOutputs[txID].push_back(origIdx);
 
                 if (accumulated >= amount) {
-                    // found enough
-                    goto Done;
+                    found = true;
+                    break;
                 }
             }
         }
     }
 
-Done:
     if (!it->status().ok()) {
         throw std::runtime_error("Error iterating UTXO set: " + it->status().ToString());
     }
@@ -76,7 +74,7 @@ std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pub
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
 
-        for (const auto& out : outs.outputs) {
+        for (const auto& [origIdx, out] : outs.outputs) {
             if (out.IsLockedWithKey(pubKeyHash)) {
                 UTXOs.push_back(out);
             }
@@ -171,8 +169,6 @@ void UTXOSet::Update(const Block& block) {
     for (const Transaction& tx : block.GetTransactions()) {
         if (!tx.IsCoinbase()) {
             for (const TransactionInput& vin : tx.GetVin()) {
-                TXOutputs updatedOuts;
-
                 std::vector<uint8_t> txid = vin.GetTxid();
                 std::string valueStr;
 
@@ -187,31 +183,28 @@ void UTXOSet::Update(const Block& block) {
                     std::vector<uint8_t> valueBytes(valueStr.begin(), valueStr.end());
                     TXOutputs outs = TXOutputs::Deserialize(valueBytes);
 
-                    // we keep all the outputs except the one being spent
-                    for (size_t outIdx = 0; outIdx < outs.outputs.size(); outIdx++) {
-                        if (static_cast<int>(outIdx) != vin.GetVout()) {
-                            updatedOuts.outputs.push_back(outs.outputs[outIdx]);
-                        }
-                    }
+                    // erase the spent output by its original index
+                    outs.outputs.erase(vin.GetVout());
 
                     // if no outputs remain, we delete the transaction from UTXO set
-                    if (updatedOuts.outputs.empty()) {
+                    if (outs.outputs.empty()) {
                         batch.Delete(ByteArrayToSlice(key));
                     } else {
                         // else we update with the remaining outputs
-                        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(updatedOuts.Serialize()));
+                        std::vector<uint8_t> serialized = outs.Serialize();
+                        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
                     }
                 } else if (!status.IsNotFound()) {
-                    // Error other than "not found"
                     throw std::runtime_error("Error reading UTXO: " + status.ToString());
                 }
             }
         }
 
-        // add the new outputs from this transaction
+        // add the new outputs from this transaction with original indices
         TXOutputs newOutputs;
-        for (const TransactionOutput& out : tx.GetVout()) {
-            newOutputs.outputs.push_back(out);
+        const auto& vout = tx.GetVout();
+        for (size_t i = 0; i < vout.size(); i++) {
+            newOutputs.outputs[static_cast<int>(i)] = vout[i];
         }
 
         std::vector<uint8_t> key;
@@ -219,7 +212,8 @@ void UTXOSet::Update(const Block& block) {
         std::vector<uint8_t> txHash = tx.GetID();
         key.insert(key.end(), txHash.begin(), txHash.end());
 
-        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(newOutputs.Serialize()));
+        std::vector<uint8_t> serialized = newOutputs.Serialize();
+        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
     }
 
     // atomic write to update db

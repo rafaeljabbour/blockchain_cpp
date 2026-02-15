@@ -2,6 +2,7 @@
 #define TRANSACTIONOUTPUT_H
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,9 +28,9 @@ class TransactionOutput {
                                                                 size_t offset);
 };
 
-// struct to store multiple outputs, under a single transaction ID in the db
+// struct to store multiple outputs keyed by their original transaction output index
 struct TXOutputs {
-        std::vector<TransactionOutput> outputs;
+        std::map<int, TransactionOutput> outputs;
 
         std::vector<uint8_t> Serialize() const;
         static TXOutputs Deserialize(const std::vector<uint8_t>& data);

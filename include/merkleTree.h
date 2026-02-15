@@ -14,8 +14,15 @@ class MerkleNode {
         std::unique_ptr<MerkleNode> right;
         std::vector<uint8_t> data;  // Hash of the data
 
-        MerkleNode(const std::vector<uint8_t>& data);
+        // tag type for constructing a node with data that is already hashed
+        struct PreHashed {};
+
+        // leaf node: hashes the raw data
+        explicit MerkleNode(const std::vector<uint8_t>& data);
+        // parent node: combines two children
         MerkleNode(std::unique_ptr<MerkleNode> left, std::unique_ptr<MerkleNode> right);
+        // pre-hashed node: copies hash directly, used for duplicate intermediate nodes
+        MerkleNode(const std::vector<uint8_t>& hash, PreHashed);
 
         ~MerkleNode() = default;
 };

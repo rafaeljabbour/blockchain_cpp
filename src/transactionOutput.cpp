@@ -70,8 +70,11 @@ std::vector<uint8_t> TXOutputs::Serialize() const {
     // number of outputs (4 bytes)
     WriteUint32(result, static_cast<uint32_t>(outputs.size()));
 
-    // each output
-    for (const auto& output : outputs) {
+    // each (original index, output) pair
+    for (const auto& [origIdx, output] : outputs) {
+        // original output index (4 bytes)
+        WriteUint32(result, static_cast<uint32_t>(origIdx));
+
         std::vector<uint8_t> outputSerialized = output.Serialize();
         result.insert(result.end(), outputSerialized.begin(), outputSerialized.end());
     }
@@ -91,10 +94,14 @@ TXOutputs TXOutputs::Deserialize(const std::vector<uint8_t>& data) {
     uint32_t outputCount = ReadUint32(data, offset);
     offset += 4;
 
-    // each output
+    // each (original index, output) pair
     for (uint32_t i = 0; i < outputCount; i++) {
+        // original output index (4 bytes)
+        int origIdx = static_cast<int>(ReadUint32(data, offset));
+        offset += 4;
+
         auto [output, bytesRead] = TransactionOutput::Deserialize(data, offset);
-        txOutputs.outputs.push_back(output);
+        txOutputs.outputs[origIdx] = output;
         offset += bytesRead;
     }
 
