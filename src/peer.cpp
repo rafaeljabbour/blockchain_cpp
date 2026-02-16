@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -15,9 +16,25 @@ static constexpr size_t MESSAGE_HEADER_SIZE = 24;
 static constexpr uint32_t MAX_PAYLOAD_SIZE = 32 * 1024 * 1024;
 
 Peer::Peer(int sockfd, const std::string& remoteIP, uint16_t remotePort)
-    : sockfd(sockfd), remoteIP(remoteIP), remotePort(remotePort), connected(true) {}
+    : sockfd(sockfd), remoteIP(remoteIP), remotePort(remotePort), connected(true) {
+    if (PEER_RECV_TIMEOUT_SECS > 0) {
+        SetRecvTimeout(PEER_RECV_TIMEOUT_SECS);
+    }
+}
 
 Peer::~Peer() { Disconnect(); }
+
+void Peer::SetRecvTimeout(int seconds) {
+    timeval tv{};
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        // no need for program to crash
+        std::cerr << "[net] Warning: failed to set recv timeout on " << GetRemoteAddress()
+                  << std::endl;
+    }
+}
 
 Peer::Peer(Peer&& other) noexcept
     : sockfd(other.sockfd),
@@ -47,9 +64,17 @@ std::vector<uint8_t> Peer::ReadExact(size_t count) {
 
     while (totalRead < count) {
         ssize_t n = recv(sockfd, buffer.data() + totalRead, count - totalRead, 0);
-        if (n <= 0) {
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                connected = false;
+                throw std::runtime_error("Recv timeout from " + GetRemoteAddress());
+            }
             connected = false;
-            throw std::runtime_error("Connection closed while reading from " + GetRemoteAddress());
+            throw std::runtime_error("Recv error from " + GetRemoteAddress());
+        }
+        if (n == 0) {
+            connected = false;
+            throw std::runtime_error("Connection closed by " + GetRemoteAddress());
         }
         totalRead += static_cast<size_t>(n);
     }

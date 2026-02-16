@@ -8,6 +8,9 @@
 
 #include "message.h"
 
+// default receive timeout in seconds
+inline constexpr int PEER_RECV_TIMEOUT_SECS = 90;
+
 // represents a single TCP connection to another node.
 class Peer {
     private:
@@ -18,6 +21,7 @@ class Peer {
 
         std::vector<uint8_t> ReadExact(size_t count);
         void WriteAll(const std::vector<uint8_t>& data);
+        void SetRecvTimeout(int seconds);
 
     public:
         Peer(int sockfd, const std::string& remoteIP, uint16_t remotePort);
