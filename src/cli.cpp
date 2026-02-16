@@ -6,6 +6,7 @@
 #include "base58.h"
 #include "blockchain.h"
 #include "blockchainIterator.h"
+#include "config.h"
 #include "node.h"
 #include "proofOfWork.h"
 #include "utils.h"
@@ -25,6 +26,8 @@ void CLI::printUsage() {
     std::cout << "  send -from FROM -to TO -amount AMOUNT - Send AMOUNT of coins from FROM address "
                  "to TO\n";
     std::cout << "  startnode -port PORT [-seed IP:PORT] - Start a network node\n";
+    std::cout << "\nGlobal flags:\n";
+    std::cout << "  -datadir DIR - Set the data directory (default: ./data)\n";
 }
 
 void CLI::createBlockchain(const std::string& address) {
@@ -135,25 +138,46 @@ void CLI::run(int argc, char* argv[]) {
         return;
     }
 
-    std::string command = argv[1];
+    // parse global -datadir flag
+    int cmdStart = 1;
+    if (std::string(argv[1]) == "-datadir") {
+        if (argc < 4) {
+            std::cout << "Error: -datadir requires a value\n";
+            printUsage();
+            return;
+        }
+        Config::SetDataDir(argv[2]);
+        cmdStart = 3;
+    }
+
+    if (cmdStart >= argc) {
+        printUsage();
+        return;
+    }
+
+    // shift argv
+    int cmdArgc = argc - cmdStart;
+    char** cmdArgv = argv + cmdStart;
+
+    std::string command = cmdArgv[0];
 
     if (command == "createwallet") {
         createWallet();
     } else if (command == "createblockchain") {
-        if (argc < 4 || std::string(argv[2]) != "-address") {
+        if (cmdArgc < 3 || std::string(cmdArgv[1]) != "-address") {
             std::cout << "Error: createblockchain requires -address flag\n";
             printUsage();
             return;
         }
-        std::string address = argv[3];
+        std::string address = cmdArgv[2];
         createBlockchain(address);
     } else if (command == "getbalance") {
-        if (argc < 4 || std::string(argv[2]) != "-address") {
+        if (cmdArgc < 3 || std::string(cmdArgv[1]) != "-address") {
             std::cout << "Error: getbalance requires -address flag\n";
             printUsage();
             return;
         }
-        std::string address = argv[3];
+        std::string address = cmdArgv[2];
         getBalance(address);
     } else if (command == "listaddresses") {
         listAddresses();
@@ -162,7 +186,7 @@ void CLI::run(int argc, char* argv[]) {
     } else if (command == "reindexutxo") {
         reindexUTXO();
     } else if (command == "send") {
-        if (argc < 8) {
+        if (cmdArgc < 7) {
             std::cout << "Error: send requires -from, -to, and -amount flags\n";
             printUsage();
             return;
@@ -172,20 +196,20 @@ void CLI::run(int argc, char* argv[]) {
         int amount = 0;
 
         // parse flags
-        for (int i = 2; i < argc; i += 2) {
-            std::string flag = argv[i];
-            if (i + 1 >= argc) {
+        for (int i = 1; i < cmdArgc; i += 2) {
+            std::string flag = cmdArgv[i];
+            if (i + 1 >= cmdArgc) {
                 std::cout << "Error: flag " << flag << " requires a value\n";
                 printUsage();
                 return;
             }
 
             if (flag == "-from") {
-                from = argv[i + 1];
+                from = cmdArgv[i + 1];
             } else if (flag == "-to") {
-                to = argv[i + 1];
+                to = cmdArgv[i + 1];
             } else if (flag == "-amount") {
-                amount = std::stoi(argv[i + 1]);
+                amount = std::stoi(cmdArgv[i + 1]);
             } else {
                 std::cout << "Error: unknown flag " << flag << "\n";
                 printUsage();
@@ -201,18 +225,18 @@ void CLI::run(int argc, char* argv[]) {
 
         send(from, to, amount);
     } else if (command == "startnode") {
-        if (argc < 4 || std::string(argv[2]) != "-port") {
+        if (cmdArgc < 3 || std::string(cmdArgv[1]) != "-port") {
             std::cout << "Error: startnode requires -port flag\n";
             printUsage();
             return;
         }
 
-        uint16_t port = static_cast<uint16_t>(std::stoi(argv[3]));
+        uint16_t port = static_cast<uint16_t>(std::stoi(cmdArgv[2]));
         std::string seedAddr;
 
         // optional -seed flag
-        if (argc >= 6 && std::string(argv[4]) == "-seed") {
-            seedAddr = argv[5];
+        if (cmdArgc >= 5 && std::string(cmdArgv[3]) == "-seed") {
+            seedAddr = cmdArgv[4];
         }
 
         startNode(port, seedAddr);

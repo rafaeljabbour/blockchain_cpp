@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include "blockchainIterator.h"
+#include "config.h"
 #include "transactionOutput.h"
 #include "utils.h"
 #include "wallet.h"
@@ -14,7 +15,7 @@
 bool Blockchain::DBExists() {
     leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
+    leveldb::Status status = leveldb::DB::Open(options, Config::GetBlocksPath(), &rawDb);
     std::unique_ptr<leveldb::DB> db(rawDb);
 
     return status.ok();
@@ -27,7 +28,7 @@ Blockchain::Blockchain() {
 
     leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
+    leveldb::Status status = leveldb::DB::Open(options, Config::GetBlocksPath(), &rawDb);
 
     if (!status.ok()) {
         throw std::runtime_error("Error opening database: " + status.ToString());
@@ -50,13 +51,14 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     }
 
     // ensure parent directory exists
-    std::filesystem::create_directories(std::filesystem::path(DB_FILE).parent_path());
+    std::filesystem::create_directories(
+        std::filesystem::path(Config::GetBlocksPath()).parent_path());
 
     leveldb::DB* rawDb = nullptr;
     leveldb::Options options;
     options.create_if_missing = true;
 
-    leveldb::Status status = leveldb::DB::Open(options, DB_FILE, &rawDb);
+    leveldb::Status status = leveldb::DB::Open(options, Config::GetBlocksPath(), &rawDb);
     if (!status.ok()) {
         throw std::runtime_error("Error creating database: " + status.ToString());
     }
