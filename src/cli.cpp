@@ -6,6 +6,7 @@
 #include "base58.h"
 #include "blockchain.h"
 #include "blockchainIterator.h"
+#include "node.h"
 #include "proofOfWork.h"
 #include "utils.h"
 #include "utxoSet.h"
@@ -23,6 +24,7 @@ void CLI::printUsage() {
     std::cout << "  reindexutxo - Rebuilds the UTXO set\n";
     std::cout << "  send -from FROM -to TO -amount AMOUNT - Send AMOUNT of coins from FROM address "
                  "to TO\n";
+    std::cout << "  startnode -port PORT [-seed IP:PORT] - Start a network node\n";
 }
 
 void CLI::createBlockchain(const std::string& address) {
@@ -120,6 +122,13 @@ void CLI::send(const std::string& from, const std::string& to, int amount) {
     std::cout << "Success!" << std::endl;
 }
 
+void CLI::startNode(uint16_t port, const std::string& seedAddr) {
+    Node node("0.0.0.0", port);
+
+    // handles seed connection and then enters the accept loop
+    node.Start(seedAddr);
+}
+
 void CLI::run(int argc, char* argv[]) {
     if (argc < 2) {
         printUsage();
@@ -191,6 +200,22 @@ void CLI::run(int argc, char* argv[]) {
         }
 
         send(from, to, amount);
+    } else if (command == "startnode") {
+        if (argc < 4 || std::string(argv[2]) != "-port") {
+            std::cout << "Error: startnode requires -port flag\n";
+            printUsage();
+            return;
+        }
+
+        uint16_t port = static_cast<uint16_t>(std::stoi(argv[3]));
+        std::string seedAddr;
+
+        // optional -seed flag
+        if (argc >= 6 && std::string(argv[4]) == "-seed") {
+            seedAddr = argv[5];
+        }
+
+        startNode(port, seedAddr);
     } else {
         std::cout << "Error: unknown command '" << command << "'\n";
         printUsage();

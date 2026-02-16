@@ -16,6 +16,7 @@ class CLI {
         void printChain();
         void reindexUTXO();
         void send(const std::string& from, const std::string& to, int amount);
+        void startNode(uint16_t port, const std::string& seedAddr);
 
     public:
         CLI() = default;
