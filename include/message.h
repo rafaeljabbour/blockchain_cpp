@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-const uint32_t MAGIC_LENGTH = 4;
-const uint32_t COMMAND_LENGTH = 12;
-const uint32_t CHECKSUM_LENGTH = 4;
+inline constexpr uint32_t MAGIC_LENGTH = 4;
+inline constexpr uint32_t COMMAND_LENGTH = 12;
+inline constexpr uint32_t CHECKSUM_LENGTH = 4;
 
 // the magic number for the blockchain
 inline const std::array<uint8_t, MAGIC_LENGTH> MAGIC_CUSTOM = {0xCA, 0xFE, 0xBA, 0xBE};
@@ -49,6 +49,7 @@ class Message {
 
         std::vector<uint8_t> Serialize() const;
         static Message Deserialize(const std::vector<uint8_t>& data);
+        static Message DeserializeHeader(const std::vector<uint8_t>& data);
 };
 
 // network helper functions

@@ -60,6 +60,10 @@ Message Message::Deserialize(const std::vector<uint8_t>& data) {
     std::copy(data.begin() + offset, data.begin() + offset + 4, msg.magic.begin());
     offset += 4;
 
+    if (msg.magic != MAGIC_CUSTOM) {
+        throw std::runtime_error("Invalid network magic number");
+    }
+
     // command (12 bytes)
     std::copy(data.begin() + offset, data.begin() + offset + 12, msg.command.begin());
     offset += 12;
@@ -88,6 +92,39 @@ Message Message::Deserialize(const std::vector<uint8_t>& data) {
 
     return msg;
 }
+
+Message Message::DeserializeHeader(const std::vector<uint8_t>& data) {
+    Message msg;
+
+    if (data.size() < 24) {
+        throw std::runtime_error("Message header data too small");
+    }
+
+    size_t offset = 0;
+
+    // magic (4 bytes)
+    std::copy(data.begin() + offset, data.begin() + offset + 4, msg.magic.begin());
+    offset += 4;
+
+    // validate magic matches the network
+    if (msg.magic != MAGIC_CUSTOM) {
+        throw std::runtime_error("Invalid network magic number");
+    }
+
+    // command (12 bytes)
+    std::copy(data.begin() + offset, data.begin() + offset + 12, msg.command.begin());
+    offset += 12;
+
+    // payload length (4 bytes)
+    msg.payloadLength = ReadUint32(data, offset);
+    offset += 4;
+
+    // checksum (4 bytes)
+    std::copy(data.begin() + offset, data.begin() + offset + 4, msg.checksum.begin());
+
+    return msg;
+}
+
 std::array<uint8_t, CHECKSUM_LENGTH> CalculateChecksum(const std::vector<uint8_t>& payload) {
     // checksum is the first 4 bytes of SHA256(SHA256(payload))
     std::vector<uint8_t> hash = SHA256Hash(SHA256Hash(payload));

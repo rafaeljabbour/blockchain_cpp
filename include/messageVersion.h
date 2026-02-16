@@ -9,10 +9,9 @@
 #include "netAddr.h"
 
 // protocol version of node
-const int32_t PROTOCOL_VERSION = 1;
-
+inline constexpr int32_t PROTOCOL_VERSION = 1;
 // service flags
-const uint64_t NODE_NETWORK = 1;
+inline constexpr uint64_t NODE_NETWORK = 1;
 
 class MessageVersion {
     private:
