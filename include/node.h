@@ -37,6 +37,10 @@ struct PeerState {
         uint64_t pongNonce = 0;
         bool pongReceived = false;
 
+        // threads for liveliness
+        std::thread readerThread;
+        std::thread monitorThread;
+
         explicit PeerState(std::unique_ptr<Peer> p) : peer(std::move(p)) {}
 };
 
@@ -46,10 +50,10 @@ class Node {
         std::string ip;
         Server server;
         std::atomic<bool> running;
+        int32_t blockchainHeight;
 
         std::vector<std::shared_ptr<PeerState>> peers;
         std::mutex peersMutex;
-        std::vector<std::thread> peerThreads;
 
         void StartPeerLoop(std::shared_ptr<PeerState> peerState);
 
@@ -69,7 +73,12 @@ class Node {
 
         void DisconnectPeer(const std::string& peerAddr);
 
-        int32_t GetBlockchainHeight() const;
+        void CleanupDisconnectedPeers();
+
+        void RunCleanupLoop();
+        std::thread cleanupThread;
+
+        static int32_t ComputeBlockchainHeight();
 
     public:
         Node(const std::string& ip, uint16_t port);

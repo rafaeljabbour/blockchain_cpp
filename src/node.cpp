@@ -15,11 +15,15 @@
 #include "utils.h"
 
 Node::Node(const std::string& ip, uint16_t port)
-    : port(port), ip(ip), server(port), running(false) {}
+    : port(port),
+      ip(ip),
+      server(port),
+      running(false),
+      blockchainHeight(ComputeBlockchainHeight()) {}
 
 Node::~Node() { Stop(); }
 
-int32_t Node::GetBlockchainHeight() const {
+int32_t Node::ComputeBlockchainHeight() {
     try {
         if (!Blockchain::DBExists()) {
             return -1;
@@ -41,16 +45,14 @@ int32_t Node::GetBlockchainHeight() const {
 }
 
 void Node::SendVersion(PeerState& peerState) {
-    int32_t height = GetBlockchainHeight();
-
     MessageVersion version(peerState.peer->GetRemoteIP(), peerState.peer->GetRemotePort(), ip, port,
-                           height, true);
+                           blockchainHeight, true);
 
     Message msg(MAGIC_CUSTOM, CMD_VERSION, version.Serialize());
     peerState.peer->SendMessage(msg);
     peerState.versionSent = true;
 
-    std::cout << "[node] Sent version (height=" << height << ") to "
+    std::cout << "[node] Sent version (height=" << blockchainHeight << ") to "
               << peerState.peer->GetRemoteAddress() << std::endl;
 }
 
@@ -77,15 +79,15 @@ void Node::HandleVersion(PeerState& peerState, const std::vector<uint8_t>& paylo
     std::cout << "[node] Sent verack to " << peerState.peer->GetRemoteAddress() << std::endl;
 
     // compare heights for sync
-    int32_t ourHeight = GetBlockchainHeight();
-    if (remoteVersion.GetStartHeight() > ourHeight) {
+    if (remoteVersion.GetStartHeight() > blockchainHeight) {
         std::cout << "[node] Peer " << peerState.peer->GetRemoteAddress() << " has more blocks ("
-                  << remoteVersion.GetStartHeight() << " vs our " << ourHeight << ")" << std::endl;
-        // TODO: Have to implement request blocks from this peer
-    } else if (remoteVersion.GetStartHeight() < ourHeight) {
-        std::cout << "[node] We have more blocks than " << peerState.peer->GetRemoteAddress()
-                  << " (" << ourHeight << " vs their " << remoteVersion.GetStartHeight() << ")"
+                  << remoteVersion.GetStartHeight() << " vs our " << blockchainHeight << ")"
                   << std::endl;
+        // TODO: Have to implement request blocks from this peer
+    } else if (remoteVersion.GetStartHeight() < blockchainHeight) {
+        std::cout << "[node] We have more blocks than " << peerState.peer->GetRemoteAddress()
+                  << " (" << blockchainHeight << " vs their " << remoteVersion.GetStartHeight()
+                  << ")" << std::endl;
         // TODO: also have to implement if they will request blocks from us
     } else {
         std::cout << "[node] Same height as " << peerState.peer->GetRemoteAddress() << std::endl;
@@ -227,18 +229,69 @@ void Node::DisconnectPeer(const std::string& peerAddr) {
     std::cout << "[node] Disconnecting peer " << peerAddr << std::endl;
 
     std::lock_guard<std::mutex> lock(peersMutex);
-    for (auto it = peers.begin(); it != peers.end(); ++it) {
-        if ((*it)->peer->GetRemoteAddress() == peerAddr) {
-            (*it)->peer->Disconnect();
-            peers.erase(it);
+    for (auto& peerState : peers) {
+        if (peerState->peer->GetRemoteAddress() == peerAddr) {
+            peerState->peer->Disconnect();
+
+            // wake monitor thread so it exits
+            {
+                std::lock_guard<std::mutex> pongLock(peerState->pongMutex);
+                peerState->pongReceived = true;
+            }
+            peerState->pongCV.notify_one();
             return;
         }
     }
 }
 
+void Node::CleanupDisconnectedPeers() {
+    // collect disconnected peers under lock, then join their threads outside the lock
+    std::vector<std::shared_ptr<PeerState>> toCleanup;
+
+    {
+        std::lock_guard<std::mutex> lock(peersMutex);
+        auto it = peers.begin();
+        while (it != peers.end()) {
+            if (!(*it)->peer->IsConnected()) {
+                toCleanup.push_back(*it);
+                it = peers.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // join outside the lock
+    for (auto& peerState : toCleanup) {
+        if (peerState->readerThread.joinable()) {
+            peerState->readerThread.join();
+        }
+        if (peerState->monitorThread.joinable()) {
+            peerState->monitorThread.join();
+        }
+    }
+
+    if (!toCleanup.empty()) {
+        std::cout << "[node] Cleaned up " << toCleanup.size() << " disconnected peer(s)"
+                  << std::endl;
+    }
+}
+
+void Node::RunCleanupLoop() {
+    while (running) {
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+
+        if (!running) {
+            break;
+        }
+
+        CleanupDisconnectedPeers();
+    }
+}
+
 void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
     // the thread that reads messages
-    peerThreads.emplace_back([this, peerState]() {
+    peerState->readerThread = std::thread([this, peerState]() {
         try {
             while (running && peerState->peer->IsConnected()) {
                 Message msg = peerState->peer->ReceiveMessage();
@@ -262,7 +315,7 @@ void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
     });
 
     // the thread that monitors liveliness
-    peerThreads.emplace_back([this, peerState]() { MonitorPeer(peerState); });
+    peerState->monitorThread = std::thread([this, peerState]() { MonitorPeer(peerState); });
 }
 
 void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
@@ -293,7 +346,10 @@ void Node::Start(const std::string& seedAddr) {
     running = true;
 
     std::cout << "[node] Node started on " << ip << ":" << port << std::endl;
-    std::cout << "[node] Blockchain height: " << GetBlockchainHeight() << std::endl;
+    std::cout << "[node] Blockchain height: " << blockchainHeight << std::endl;
+
+    // start background cleanup of disconnected peers
+    cleanupThread = std::thread([this]() { RunCleanupLoop(); });
 
     // outbound connection (connect to seed node if specified)
     if (!seedAddr.empty()) {
@@ -349,10 +405,13 @@ void Node::Stop() {
     running = false;
     server.Stop();
 
-    // disconnect all the peers and wake any monitor threads
+    // copy peers under lock, disconnect and wake all monitor threads
+    std::vector<std::shared_ptr<PeerState>> peersSnapshot;
     {
         std::lock_guard<std::mutex> lock(peersMutex);
-        for (auto& peerState : peers) {
+        peersSnapshot = peers;
+
+        for (auto& peerState : peersSnapshot) {
             peerState->peer->Disconnect();
 
             // we wake the monitoring thread so it exits
@@ -364,14 +423,20 @@ void Node::Stop() {
         }
     }
 
-    // wait for all the threads to finish
-    for (auto& thread : peerThreads) {
-        if (thread.joinable()) {
-            thread.join();
-        }
+    // join the cleanup thread first
+    if (cleanupThread.joinable()) {
+        cleanupThread.join();
     }
 
-    peerThreads.clear();
+    // join all threads
+    for (auto& peerState : peersSnapshot) {
+        if (peerState->readerThread.joinable()) {
+            peerState->readerThread.join();
+        }
+        if (peerState->monitorThread.joinable()) {
+            peerState->monitorThread.join();
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(peersMutex);

@@ -20,6 +20,9 @@ Peer::Peer(int sockfd, const std::string& remoteIP, uint16_t remotePort)
     if (PEER_RECV_TIMEOUT_SECS > 0) {
         SetRecvTimeout(PEER_RECV_TIMEOUT_SECS);
     }
+    if (PEER_SEND_TIMEOUT_SECS > 0) {
+        SetSendTimeout(PEER_SEND_TIMEOUT_SECS);
+    }
 }
 
 Peer::~Peer() { Disconnect(); }
@@ -32,6 +35,17 @@ void Peer::SetRecvTimeout(int seconds) {
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
         // no need for program to crash
         std::cerr << "[net] Warning: failed to set recv timeout on " << GetRemoteAddress()
+                  << std::endl;
+    }
+}
+
+void Peer::SetSendTimeout(int seconds) {
+    timeval tv{};
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+        std::cerr << "[net] Warning: failed to set send timeout on " << GetRemoteAddress()
                   << std::endl;
     }
 }
@@ -88,6 +102,10 @@ void Peer::WriteAll(const std::vector<uint8_t>& data) {
     while (totalSent < data.size()) {
         ssize_t n = send(sockfd, data.data() + totalSent, data.size() - totalSent, 0);
         if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                connected = false;
+                throw std::runtime_error("Send timeout to " + GetRemoteAddress());
+            }
             connected = false;
             throw std::runtime_error("Failed to send to " + GetRemoteAddress());
         }
