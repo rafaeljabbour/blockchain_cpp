@@ -2,6 +2,7 @@
 #define NODE_H
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -15,13 +16,26 @@
 // maximum number of simultaneous peer connections
 inline constexpr size_t MAX_PEERS = 125;
 
-// tracks a peer connection and its handshake state
+// liveliness monitoring constants
+inline constexpr int PING_INTERVAL_SECS = 120;
+inline constexpr int PING_TIMEOUT_SECS = 30;
+
+// tracks a peer connection, handshake state, and liveliness
 struct PeerState {
         std::unique_ptr<Peer> peer;
         bool versionSent = false;      // have we sent our version to this peer?
         bool versionReceived = false;  // have we received their version?
         bool handshakeComplete = false;
-        int32_t remoteHeight = -1;  // their blockchain height
+        int32_t remoteHeight = -1;    // their blockchain height
+        uint64_t services = 0;        // services they advertise
+        std::string userAgent;        // their software name/version
+        int32_t protocolVersion = 0;  // their protocol version
+
+        // liveliness monitoring
+        std::mutex pongMutex;
+        std::condition_variable pongCV;
+        uint64_t pongNonce = 0;
+        bool pongReceived = false;
 
         explicit PeerState(std::unique_ptr<Peer> p) : peer(std::move(p)) {}
 };
@@ -44,9 +58,16 @@ class Node {
         // message handlers
         void HandleVersion(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleVerack(PeerState& peerState);
+        void HandlePing(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandlePong(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload);
 
-        // sends our version message to a peer
         void SendVersion(PeerState& peerState);
+
+        void MonitorPeer(std::shared_ptr<PeerState> peerState);
+
+        void DisconnectPeer(const std::string& peerAddr);
 
         int32_t GetBlockchainHeight() const;
 

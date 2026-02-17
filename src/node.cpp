@@ -1,13 +1,18 @@
 #include "node.h"
 
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
 #include "blockchain.h"
 #include "blockchainIterator.h"
 #include "message.h"
+#include "messageInv.h"
+#include "messagePing.h"
 #include "messageVerack.h"
 #include "messageVersion.h"
+#include "transaction.h"
+#include "utils.h"
 
 Node::Node(const std::string& ip, uint16_t port)
     : port(port), ip(ip), server(port), running(false) {}
@@ -54,6 +59,9 @@ void Node::HandleVersion(PeerState& peerState, const std::vector<uint8_t>& paylo
 
     peerState.versionReceived = true;
     peerState.remoteHeight = remoteVersion.GetStartHeight();
+    peerState.services = remoteVersion.GetServices();
+    peerState.userAgent = remoteVersion.GetUserAgent();
+    peerState.protocolVersion = remoteVersion.GetVersion();
 
     std::cout << "[node] Received version from " << peerState.peer->GetRemoteAddress()
               << " (height=" << remoteVersion.GetStartHeight()
@@ -90,6 +98,56 @@ void Node::HandleVerack(PeerState& peerState) {
               << std::endl;
 }
 
+void Node::HandlePing(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    MessagePing ping = MessagePing::Deserialize(payload);
+
+    // immediately echo back the nonce in a pong
+    Message pong = CreatePongMessage(ping.GetNonce());
+    peerState.peer->SendMessage(pong);
+
+    std::cout << "[node] Replied pong to " << peerState.peer->GetRemoteAddress() << std::endl;
+}
+
+void Node::HandlePong(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    MessagePong pong = MessagePong::Deserialize(payload);
+
+    // signal the monitor thread that a pong was received
+    {
+        std::lock_guard<std::mutex> lock(peerState.pongMutex);
+        peerState.pongNonce = pong.GetNonce();
+        peerState.pongReceived = true;
+    }
+    peerState.pongCV.notify_one();
+}
+
+void Node::HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    MessageInv inv = MessageInv::Deserialize(payload);
+
+    std::cout << "[node] Received inv with " << +inv.GetCount() << " items from "
+              << peerState.peer->GetRemoteAddress() << std::endl;
+
+    // reply with getdata for all announced objects
+    MessageGetData getData(inv.GetInventory());
+    Message msg(MAGIC_CUSTOM, CMD_GETDATA, getData.Serialize());
+    peerState.peer->SendMessage(msg);
+
+    std::cout << "[node] Sent getdata for " << +getData.GetCount() << " items to "
+              << peerState.peer->GetRemoteAddress() << std::endl;
+}
+
+void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    try {
+        Transaction tx = Transaction::Deserialize(payload);
+        std::cout << "[node] Received transaction " << ByteArrayToHexString(tx.GetID()) << " from "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+
+        // TODO: need to validate transaction and add to mempool once block handling is implemented
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to deserialize tx from " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+}
+
 void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
     std::string cmd = msg.GetCommandString();
 
@@ -97,13 +155,89 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
         HandleVersion(peerState, msg.GetPayload());
     } else if (cmd == CMD_VERACK) {
         HandleVerack(peerState);
+    } else if (cmd == CMD_PING) {
+        HandlePing(peerState, msg.GetPayload());
+    } else if (cmd == CMD_PONG) {
+        HandlePong(peerState, msg.GetPayload());
+    } else if (cmd == CMD_INV) {
+        HandleInv(peerState, msg.GetPayload());
+    } else if (cmd == CMD_TX) {
+        HandleTx(peerState, msg.GetPayload());
     } else {
         std::cout << "[node] Unknown command '" << cmd << "' from "
                   << peerState.peer->GetRemoteAddress() << std::endl;
     }
 }
 
+void Node::MonitorPeer(std::shared_ptr<PeerState> peerState) {
+    while (running && peerState->peer->IsConnected()) {
+        // wait before first ping
+        std::this_thread::sleep_for(std::chrono::seconds(PING_INTERVAL_SECS));
+
+        if (!running || !peerState->peer->IsConnected()) {
+            break;
+        }
+
+        // send ping with random nonce
+        auto [pingMsg, nonce] = CreatePingMessage();
+
+        try {
+            peerState->peer->SendMessage(pingMsg);
+        } catch (const std::exception& e) {
+            std::cerr << "[node] Failed to send ping to " << peerState->peer->GetRemoteAddress()
+                      << ": " << e.what() << std::endl;
+            DisconnectPeer(peerState->peer->GetRemoteAddress());
+            return;
+        }
+
+        std::cout << "[node] Sent ping to " << peerState->peer->GetRemoteAddress() << std::endl;
+
+        // wait for pong with timeout
+        {
+            std::unique_lock<std::mutex> lock(peerState->pongMutex);
+            peerState->pongReceived = false;
+
+            bool received =
+                peerState->pongCV.wait_for(lock, std::chrono::seconds(PING_TIMEOUT_SECS),
+                                           [&peerState]() { return peerState->pongReceived; });
+
+            if (!received) {
+                std::cerr << "[node] Peer " << peerState->peer->GetRemoteAddress()
+                          << " no pong reply for " << PING_TIMEOUT_SECS << "s -- disconnecting"
+                          << std::endl;
+                DisconnectPeer(peerState->peer->GetRemoteAddress());
+                return;
+            }
+
+            // validate nonce matches
+            if (peerState->pongNonce != nonce) {
+                std::cerr << "[node] Nonce mismatch from " << peerState->peer->GetRemoteAddress()
+                          << ": expected " << nonce << ", got " << peerState->pongNonce
+                          << " -- disconnecting" << std::endl;
+                DisconnectPeer(peerState->peer->GetRemoteAddress());
+                return;
+            }
+        }
+
+        std::cout << "[node] Got pong from " << peerState->peer->GetRemoteAddress() << std::endl;
+    }
+}
+
+void Node::DisconnectPeer(const std::string& peerAddr) {
+    std::cout << "[node] Disconnecting peer " << peerAddr << std::endl;
+
+    std::lock_guard<std::mutex> lock(peersMutex);
+    for (auto it = peers.begin(); it != peers.end(); ++it) {
+        if ((*it)->peer->GetRemoteAddress() == peerAddr) {
+            (*it)->peer->Disconnect();
+            peers.erase(it);
+            return;
+        }
+    }
+}
+
 void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
+    // the thread that reads messages
     peerThreads.emplace_back([this, peerState]() {
         try {
             while (running && peerState->peer->IsConnected()) {
@@ -118,7 +252,17 @@ void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
         }
 
         peerState->peer->Disconnect();
+
+        // wake the monitor thread so it exits
+        {
+            std::lock_guard<std::mutex> lock(peerState->pongMutex);
+            peerState->pongReceived = true;
+        }
+        peerState->pongCV.notify_one();
     });
+
+    // the thread that monitors liveliness
+    peerThreads.emplace_back([this, peerState]() { MonitorPeer(peerState); });
 }
 
 void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
@@ -135,7 +279,7 @@ void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
             peers.push_back(peerState);
         }
 
-        // start reading messages from this peer
+        // start reading messages and monitoring this peer
         StartPeerLoop(peerState);
 
     } catch (const std::exception& e) {
@@ -205,11 +349,18 @@ void Node::Stop() {
     running = false;
     server.Stop();
 
-    // disconnect all the peers
+    // disconnect all the peers and wake any monitor threads
     {
         std::lock_guard<std::mutex> lock(peersMutex);
         for (auto& peerState : peers) {
             peerState->peer->Disconnect();
+
+            // we wake the monitoring thread so it exits
+            {
+                std::lock_guard<std::mutex> pongLock(peerState->pongMutex);
+                peerState->pongReceived = true;
+            }
+            peerState->pongCV.notify_one();
         }
     }
 
