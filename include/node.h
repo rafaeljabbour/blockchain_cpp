@@ -10,7 +10,9 @@
 #include <thread>
 #include <vector>
 
+#include "mempool.h"
 #include "peer.h"
+#include "rpcServer.h"
 #include "server.h"
 
 // maximum number of simultaneous peer connections
@@ -20,7 +22,7 @@ inline constexpr size_t MAX_PEERS = 125;
 inline constexpr int PING_INTERVAL_SECS = 120;
 inline constexpr int PING_TIMEOUT_SECS = 30;
 
-// tracks a peer connection, handshake state, and liveliness
+// tracks a peer connection, handshake state, and liveliness and thread
 struct PeerState {
         std::unique_ptr<Peer> peer;
         bool versionSent = false;      // have we sent our version to this peer?
@@ -52,6 +54,9 @@ class Node {
         std::atomic<bool> running;
         int32_t blockchainHeight;
 
+        Mempool mempool;
+        RPCServer rpcServer;
+
         std::vector<std::shared_ptr<PeerState>> peers;
         std::mutex peersMutex;
 
@@ -66,6 +71,7 @@ class Node {
         void HandlePong(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload);
 
         void SendVersion(PeerState& peerState);
 
@@ -78,10 +84,14 @@ class Node {
         void RunCleanupLoop();
         std::thread cleanupThread;
 
+        void RegisterRPCMethods();
+
         static int32_t ComputeBlockchainHeight();
 
+        static bool VerifyTransaction(const Transaction& tx);
+
     public:
-        Node(const std::string& ip, uint16_t port);
+        Node(const std::string& ip, uint16_t port, uint16_t rpcPort = DEFAULT_RPC_PORT);
         ~Node();
 
         Node(const Node&) = delete;

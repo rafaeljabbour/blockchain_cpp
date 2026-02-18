@@ -11,15 +11,19 @@
 #include "messagePing.h"
 #include "messageVerack.h"
 #include "messageVersion.h"
+#include "proofOfWork.h"
 #include "transaction.h"
 #include "utils.h"
 
-Node::Node(const std::string& ip, uint16_t port)
+Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort)
     : port(port),
       ip(ip),
       server(port),
       running(false),
-      blockchainHeight(ComputeBlockchainHeight()) {}
+      blockchainHeight(ComputeBlockchainHeight()),
+      rpcServer(rpcPort) {
+    RegisterRPCMethods();
+}
 
 Node::~Node() { Stop(); }
 
@@ -42,6 +46,39 @@ int32_t Node::ComputeBlockchainHeight() {
     } catch (const std::exception&) {
         return -1;
     }
+}
+
+bool Node::VerifyTransaction(const Transaction& tx) {
+    if (tx.IsCoinbase()) {
+        return true;
+    }
+
+    // at least one input
+    if (tx.GetVin().empty()) {
+        return false;
+    }
+
+    // at least one output
+    if (tx.GetVout().empty()) {
+        return false;
+    }
+
+    return true;
+}
+
+void Node::RegisterRPCMethods() {
+    rpcServer.RegisterMethod("getmempool", [this]() -> nlohmann::json {
+        auto txs = mempool.GetTransactions();
+        nlohmann::json result;
+        result["size"] = txs.size();
+        result["transactions"] = nlohmann::json::array();
+
+        for (const auto& [txid, tx] : txs) {
+            result["transactions"].push_back(txid);
+        }
+
+        return result;
+    });
 }
 
 void Node::SendVersion(PeerState& peerState) {
@@ -140,12 +177,51 @@ void Node::HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload) 
 void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
     try {
         Transaction tx = Transaction::Deserialize(payload);
-        std::cout << "[node] Received transaction " << ByteArrayToHexString(tx.GetID()) << " from "
+        std::string txid = ByteArrayToHexString(tx.GetID());
+
+        std::cout << "[node] Received transaction " << txid << " from "
                   << peerState.peer->GetRemoteAddress() << std::endl;
 
-        // TODO: need to validate transaction and add to mempool once block handling is implemented
+        // verification before the mempool insertion
+        if (!VerifyTransaction(tx)) {
+            std::cerr << "[node] Rejected invalid transaction " << txid << std::endl;
+            return;
+        }
+
+        mempool.AddTransaction(tx);
     } catch (const std::exception& e) {
         std::cerr << "[node] Failed to deserialize tx from " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+}
+
+void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    try {
+        Block block = Block::Deserialize(payload);
+        std::string blockHash = ByteArrayToHexString(block.GetHash());
+
+        std::cout << "[node] Received block " << blockHash << " from "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+
+        // verify proof of work
+        ProofOfWork pow(&block);
+        if (!pow.Validate()) {
+            std::cerr << "[node] Rejected invalid block " << blockHash << std::endl;
+            return;
+        }
+
+        std::cout << "[node] Block " << blockHash << " passed PoW verification" << std::endl;
+
+        // remove mined transactions from mempool
+        mempool.RemoveBlockTransactions(block);
+
+        // update cached height
+        blockchainHeight++;
+        std::cout << "[node] Blockchain height is now " << blockchainHeight << std::endl;
+
+        // TODO: store the block in the blockchain database
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to process block from " << peerState.peer->GetRemoteAddress()
                   << ": " << e.what() << std::endl;
     }
 }
@@ -165,6 +241,8 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
         HandleInv(peerState, msg.GetPayload());
     } else if (cmd == CMD_TX) {
         HandleTx(peerState, msg.GetPayload());
+    } else if (cmd == CMD_BLOCK) {
+        HandleBlock(peerState, msg.GetPayload());
     } else {
         std::cout << "[node] Unknown command '" << cmd << "' from "
                   << peerState.peer->GetRemoteAddress() << std::endl;
@@ -348,6 +426,9 @@ void Node::Start(const std::string& seedAddr) {
     std::cout << "[node] Node started on " << ip << ":" << port << std::endl;
     std::cout << "[node] Blockchain height: " << blockchainHeight << std::endl;
 
+    // start the JSON RPC server for query
+    rpcServer.Start();
+
     // start background cleanup of disconnected peers
     cleanupThread = std::thread([this]() { RunCleanupLoop(); });
 
@@ -404,6 +485,12 @@ void Node::Start(const std::string& seedAddr) {
 void Node::Stop() {
     running = false;
     server.Stop();
+    rpcServer.Stop();
+
+    // join the cleanup thread first
+    if (cleanupThread.joinable()) {
+        cleanupThread.join();
+    }
 
     // copy peers under lock, disconnect and wake all monitor threads
     std::vector<std::shared_ptr<PeerState>> peersSnapshot;
@@ -421,11 +508,6 @@ void Node::Stop() {
             }
             peerState->pongCV.notify_one();
         }
-    }
-
-    // join the cleanup thread first
-    if (cleanupThread.joinable()) {
-        cleanupThread.join();
     }
 
     // join all threads

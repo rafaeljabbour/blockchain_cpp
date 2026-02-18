@@ -1,9 +1,8 @@
 #ifndef CLI_H
 #define CLI_H
 
+#include <cstdint>
 #include <string>
-
-#include "blockchain.h"
 
 class CLI {
     private:
@@ -16,7 +15,7 @@ class CLI {
         void printChain();
         void reindexUTXO();
         void send(const std::string& from, const std::string& to, int amount);
-        void startNode(uint16_t port, const std::string& seedAddr);
+        void startNode(uint16_t port, const std::string& seedAddr, uint16_t rpcPort);
 
     public:
         CLI() = default;

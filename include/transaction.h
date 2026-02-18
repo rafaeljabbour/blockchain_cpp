@@ -21,11 +21,10 @@ class Transaction {
         std::vector<TransactionInput> vin;
         std::vector<TransactionOutput> vout;
 
+    public:
         Transaction() = default;
         Transaction(const std::vector<uint8_t>& id, const std::vector<TransactionInput>& vin,
                     const std::vector<TransactionOutput>& vout);
-
-    public:
         const std::vector<uint8_t>& GetID() const { return id; }
         const std::vector<TransactionInput>& GetVin() const { return vin; }
         const std::vector<TransactionOutput>& GetVout() const { return vout; }
