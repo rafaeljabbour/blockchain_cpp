@@ -32,6 +32,19 @@ std::map<std::string, Transaction> Mempool::GetTransactions() const {
     return transactions;
 }
 
+// TODO: not sure yet how useful this is once I want to add more RPC apis
+std::vector<std::string> Mempool::GetTransactionIDs() const {
+    std::lock_guard<std::mutex> lock(mtx);
+    std::vector<std::string> ids;
+    ids.reserve(transactions.size());
+
+    for (const auto& [txid, _] : transactions) {
+        ids.push_back(txid);
+    }
+
+    return ids;
+}
+
 size_t Mempool::GetCount() const {
     std::lock_guard<std::mutex> lock(mtx);
     return transactions.size();

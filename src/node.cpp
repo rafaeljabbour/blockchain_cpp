@@ -68,14 +68,10 @@ bool Node::VerifyTransaction(const Transaction& tx) {
 
 void Node::RegisterRPCMethods() {
     rpcServer.RegisterMethod("getmempool", [this]() -> nlohmann::json {
-        auto txs = mempool.GetTransactions();
+        auto ids = mempool.GetTransactionIDs();
         nlohmann::json result;
-        result["size"] = txs.size();
-        result["transactions"] = nlohmann::json::array();
-
-        for (const auto& [txid, tx] : txs) {
-            result["transactions"].push_back(txid);
-        }
+        result["size"] = ids.size();
+        result["transactions"] = std::move(ids);
 
         return result;
     });
@@ -211,6 +207,16 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
         }
 
         std::cout << "[node] Block " << blockHash << " passed PoW verification" << std::endl;
+
+        // validate all transactions in the block
+        for (const auto& tx : block.GetTransactions()) {
+            if (!VerifyTransaction(tx)) {
+                std::cerr << "[node] Rejected block " << blockHash
+                          << ": contains invalid transaction " << ByteArrayToHexString(tx.GetID())
+                          << std::endl;
+                return;
+            }
+        }
 
         // remove mined transactions from mempool
         mempool.RemoveBlockTransactions(block);
