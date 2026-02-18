@@ -9,7 +9,7 @@
 #include "message.h"
 
 // default receive timeout in seconds
-inline constexpr int PEER_RECV_TIMEOUT_SECS = 90;
+inline constexpr int PEER_RECV_TIMEOUT_SECS = 0;
 
 // default send timeout in seconds
 inline constexpr int PEER_SEND_TIMEOUT_SECS = 30;

@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "blockchain.h"
 #include "mempool.h"
 #include "peer.h"
 #include "rpcServer.h"
@@ -52,10 +53,18 @@ class Node {
         std::string ip;
         Server server;
         std::atomic<bool> running;
-        int32_t blockchainHeight;
+        std::atomic<int32_t> blockchainHeight;
 
         Mempool mempool;
         RPCServer rpcServer;
+
+        // persistent blockchain handling
+        std::unique_ptr<Blockchain> blockchain;
+        std::mutex blockchainMutex;
+
+        std::atomic<bool> syncing{false};
+        // protected by blockchainMutex
+        std::string syncPeerAddr;  
 
         std::vector<std::shared_ptr<PeerState>> peers;
         std::mutex peersMutex;
@@ -72,6 +81,8 @@ class Node {
         void HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleGetBlocks(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleGetData(PeerState& peerState, const std::vector<uint8_t>& payload);
 
         void SendVersion(PeerState& peerState);
 

@@ -3,6 +3,7 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,7 @@ class Mempool {
         void RemoveBlockTransactions(const Block& block);
         std::map<std::string, Transaction> GetTransactions() const;
         std::vector<std::string> GetTransactionIDs() const;
+        std::optional<Transaction> FindTransaction(const std::string& txid) const;
         size_t GetCount() const;
 };
 

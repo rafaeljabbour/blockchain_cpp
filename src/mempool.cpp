@@ -45,6 +45,15 @@ std::vector<std::string> Mempool::GetTransactionIDs() const {
     return ids;
 }
 
+std::optional<Transaction> Mempool::FindTransaction(const std::string& txid) const {
+    std::lock_guard<std::mutex> lock(mtx);
+    auto it = transactions.find(txid);
+    if (it != transactions.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
 size_t Mempool::GetCount() const {
     std::lock_guard<std::mutex> lock(mtx);
     return transactions.size();

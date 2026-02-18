@@ -3,6 +3,7 @@
 #include <leveldb/iterator.h>
 #include <leveldb/write_batch.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 
@@ -132,6 +133,82 @@ Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     tip = newHash;
     return newBlock;
+}
+
+void Blockchain::AddBlock(const Block& block) {
+    // verify the block links to our current tip
+    if (block.GetPreviousHash() != tip) {
+        throw std::runtime_error("Block's previous hash does not match current tip");
+    }
+
+    std::vector<uint8_t> blockHash = block.GetHash();
+
+    // check if we already have this block
+    std::vector<uint8_t> key;
+    key.push_back('b');
+    key.insert(key.end(), blockHash.begin(), blockHash.end());
+
+    std::string existing;
+    leveldb::Status status = db->Get(leveldb::ReadOptions(), ByteArrayToSlice(key), &existing);
+    if (status.ok()) {
+        return;  // already have it
+    }
+
+    // store block and update tip atomically
+    std::vector<uint8_t> serialized = block.Serialize();
+
+    leveldb::WriteBatch batch;
+    batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
+    batch.Put("l", ByteArrayToSlice(blockHash));
+
+    status = db->Write(leveldb::WriteOptions(), &batch);
+    if (!status.ok()) {
+        throw std::runtime_error("Error writing block: " + status.ToString());
+    }
+
+    tip = blockHash;
+}
+
+Block Blockchain::GetBlock(const std::vector<uint8_t>& hash) const {
+    std::vector<uint8_t> key;
+    key.push_back('b');
+    key.insert(key.end(), hash.begin(), hash.end());
+
+    std::string serializedBlock;
+    leveldb::Status status =
+        db->Get(leveldb::ReadOptions(), ByteArrayToSlice(key), &serializedBlock);
+    if (!status.ok()) {
+        throw std::runtime_error("Block not found");
+    }
+
+    std::vector<uint8_t> data(serializedBlock.begin(), serializedBlock.end());
+    return Block::Deserialize(data);
+}
+
+std::vector<std::vector<uint8_t>> Blockchain::GetBlockHashesAfter(
+    const std::vector<uint8_t>& afterHash) const {
+    // walk from tip backwards collecting all hashes
+    std::vector<std::vector<uint8_t>> allHashes;
+    BlockchainIterator bci(tip, db.get());
+
+    while (bci.hasNext()) {
+        Block block = bci.Next();
+        allHashes.push_back(block.GetHash());
+    }
+
+    // we now have newest first, reverse to get oldest first
+    std::reverse(allHashes.begin(), allHashes.end());
+
+    // find afterHash in the list
+    for (size_t i = 0; i < allHashes.size(); i++) {
+        if (allHashes[i] == afterHash) {
+            // return everything after this position
+            return std::vector<std::vector<uint8_t>>(allHashes.begin() + i + 1, allHashes.end());
+        }
+    }
+
+    // if no hash is found then the peer is on a different chain, we can't help them sync
+    return {};
 }
 
 std::map<std::string, TXOutputs> Blockchain::FindUTXO() {

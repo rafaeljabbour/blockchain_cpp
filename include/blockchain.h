@@ -37,6 +37,14 @@ class Blockchain {
 
         Block MineBlock(const std::vector<Transaction>& transactions);
 
+        // adds a mined block received from a peer.
+        void AddBlock(const Block& block);
+        Block GetBlock(const std::vector<uint8_t>& hash) const;
+        std::vector<std::vector<uint8_t>> GetBlockHashesAfter(
+            const std::vector<uint8_t>& afterHash) const;
+
+        const std::vector<uint8_t>& GetTip() const { return tip; }
+
         std::map<std::string, TXOutputs> FindUTXO();
 
         Transaction FindTransaction(const std::vector<uint8_t>& ID);

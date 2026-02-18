@@ -7,6 +7,7 @@
 #include "blockchain.h"
 #include "blockchainIterator.h"
 #include "message.h"
+#include "messageGetBlocks.h"
 #include "messageInv.h"
 #include "messagePing.h"
 #include "messageVerack.h"
@@ -14,6 +15,7 @@
 #include "proofOfWork.h"
 #include "transaction.h"
 #include "utils.h"
+#include "utxoSet.h"
 
 Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort)
     : port(port),
@@ -22,6 +24,15 @@ Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort)
       running(false),
       blockchainHeight(ComputeBlockchainHeight()),
       rpcServer(rpcPort) {
+    // open persistent blockchain handle if the database exists
+    if (Blockchain::DBExists()) {
+        try {
+            blockchain = std::make_unique<Blockchain>();
+        } catch (const std::exception& e) {
+            std::cerr << "[node] Warning: could not open blockchain: " << e.what() << std::endl;
+        }
+    }
+
     RegisterRPCMethods();
 }
 
@@ -72,7 +83,21 @@ void Node::RegisterRPCMethods() {
         nlohmann::json result;
         result["size"] = ids.size();
         result["transactions"] = std::move(ids);
+        
+        return result;
+    });
 
+    rpcServer.RegisterMethod("getblockcount",
+                             [this]() -> nlohmann::json { return blockchainHeight.load(); });
+
+    rpcServer.RegisterMethod("getsyncing", [this]() -> nlohmann::json {
+        nlohmann::json result;
+        result["syncing"] = syncing.load();
+        result["height"] = blockchainHeight.load();
+        if (syncing) {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            result["syncPeer"] = syncPeerAddr;
+        }
         return result;
     });
 }
@@ -111,17 +136,39 @@ void Node::HandleVersion(PeerState& peerState, const std::vector<uint8_t>& paylo
     peerState.peer->SendMessage(CreateVerackMessage());
     std::cout << "[node] Sent verack to " << peerState.peer->GetRemoteAddress() << std::endl;
 
-    // compare heights for sync
+    // compare heights and initiate sync if behind
     if (remoteVersion.GetStartHeight() > blockchainHeight) {
         std::cout << "[node] Peer " << peerState.peer->GetRemoteAddress() << " has more blocks ("
                   << remoteVersion.GetStartHeight() << " vs our " << blockchainHeight << ")"
                   << std::endl;
-        // TODO: Have to implement request blocks from this peer
+
+        if (!syncing && blockchain) {
+            Message getBlocksMsg;
+            bool shouldSync = false;
+            {
+                std::lock_guard<std::mutex> lock(blockchainMutex);
+                // check again under lock to prevent race between different handlers
+                if (!syncing && blockchain) {
+                    syncing = true;
+                    syncPeerAddr = peerState.peer->GetRemoteAddress();
+
+                    MessageGetBlocks getBlocks(blockchain->GetTip());
+                    getBlocksMsg = Message(MAGIC_CUSTOM, CMD_GETBLOCKS, getBlocks.Serialize());
+                    shouldSync = true;
+                }
+            }
+
+            if (shouldSync) {
+                peerState.peer->SendMessage(getBlocksMsg);
+                std::cout << "[node] Sent getblocks to " << peerState.peer->GetRemoteAddress()
+                          << std::endl;
+            }
+        }
     } else if (remoteVersion.GetStartHeight() < blockchainHeight) {
         std::cout << "[node] We have more blocks than " << peerState.peer->GetRemoteAddress()
                   << " (" << blockchainHeight << " vs their " << remoteVersion.GetStartHeight()
                   << ")" << std::endl;
-        // TODO: also have to implement if they will request blocks from us
+        // peer will request blocks from us using getblocks
     } else {
         std::cout << "[node] Same height as " << peerState.peer->GetRemoteAddress() << std::endl;
     }
@@ -170,6 +217,122 @@ void Node::HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload) 
               << peerState.peer->GetRemoteAddress() << std::endl;
 }
 
+void Node::HandleGetBlocks(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    try {
+        MessageGetBlocks getBlocks = MessageGetBlocks::Deserialize(payload);
+
+        // gather hashes under lock
+        std::vector<std::vector<uint8_t>> hashes;
+        bool noCommonAncestor = false;
+        {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (!blockchain) {
+                std::cerr << "[node] Cannot handle getblocks: no blockchain" << std::endl;
+                return;
+            }
+
+            hashes = blockchain->GetBlockHashesAfter(getBlocks.GetTipHash());
+
+            if (hashes.empty()) {
+                if (getBlocks.GetTipHash() != blockchain->GetTip()) {
+                    noCommonAncestor = true;
+                }
+            }
+        }
+
+        if (hashes.empty()) {
+            if (noCommonAncestor) {
+                std::string peerTip = ByteArrayToHexString(getBlocks.GetTipHash()).substr(0, 16);
+                std::cerr << "[node] No common ancestor with " << peerState.peer->GetRemoteAddress()
+                          << " (their tip: " << peerTip << "...)" << std::endl;
+            } else {
+                std::cout << "[node] Peer " << peerState.peer->GetRemoteAddress()
+                          << " is already up to date" << std::endl;
+            }
+            return;
+        }
+
+        // build and send inv outside the lock
+        std::vector<InvVector> inventory;
+        inventory.reserve(hashes.size());
+        for (const auto& hash : hashes) {
+            inventory.push_back({InvType::Block, hash});
+        }
+
+        MessageInv inv(inventory);
+        Message msg(MAGIC_CUSTOM, CMD_INV, inv.Serialize());
+        peerState.peer->SendMessage(msg);
+
+        std::cout << "[node] Sent inv with " << hashes.size() << " block hashes to "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to handle getblocks from " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+}
+
+void Node::HandleGetData(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    try {
+        MessageGetData getData = MessageGetData::Deserialize(payload);
+
+        std::cout << "[node] Received getdata for " << +getData.GetCount() << " items from "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+
+        // separate requested items by type
+        std::vector<std::vector<uint8_t>> blockHashes;
+        std::vector<std::vector<uint8_t>> txHashes;
+
+        for (const auto& inv : getData.GetInventory()) {
+            if (inv.type == InvType::Block) {
+                blockHashes.push_back(inv.hash);
+            } else if (inv.type == InvType::Tx) {
+                txHashes.push_back(inv.hash);
+            }
+        }
+
+        // gather all requested blocks under one lock, send outside
+        std::vector<Block> blocksToSend;
+        {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (blockchain) {
+                blocksToSend.reserve(blockHashes.size());
+                for (const auto& hash : blockHashes) {
+                    try {
+                        blocksToSend.push_back(blockchain->GetBlock(hash));
+                    } catch (const std::exception&) {
+                        std::cerr << "[node] Block not found: "
+                                  << ByteArrayToHexString(hash).substr(0, 16) << "..." << std::endl;
+                    }
+                }
+            }
+        }
+
+        for (const auto& block : blocksToSend) {
+            Message msg(MAGIC_CUSTOM, CMD_BLOCK, block.Serialize());
+            peerState.peer->SendMessage(msg);
+
+            std::cout << "[node] Sent block " << ByteArrayToHexString(block.GetHash()).substr(0, 16)
+                      << "... to " << peerState.peer->GetRemoteAddress() << std::endl;
+        }
+
+        // look up each transaction individually
+        for (const auto& hash : txHashes) {
+            std::string txid = ByteArrayToHexString(hash);
+            auto tx = mempool.FindTransaction(txid);
+            if (tx) {
+                Message msg(MAGIC_CUSTOM, CMD_TX, tx->Serialize());
+                peerState.peer->SendMessage(msg);
+
+                std::cout << "[node] Sent tx " << txid.substr(0, 16) << "... to "
+                          << peerState.peer->GetRemoteAddress() << std::endl;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to handle getdata from " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+}
+
 void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
     try {
         Transaction tx = Transaction::Deserialize(payload);
@@ -206,8 +369,6 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             return;
         }
 
-        std::cout << "[node] Block " << blockHash << " passed PoW verification" << std::endl;
-
         // validate all transactions in the block
         for (const auto& tx : block.GetTransactions()) {
             if (!VerifyTransaction(tx)) {
@@ -218,14 +379,39 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             }
         }
 
-        // remove mined transactions from mempool
-        mempool.RemoveBlockTransactions(block);
+        // persist block and check sync status under one lock
+        {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (!blockchain) {
+                std::cerr << "[node] Cannot store block: no blockchain" << std::endl;
+                return;
+            }
 
-        // update cached height
-        blockchainHeight++;
-        std::cout << "[node] Blockchain height is now " << blockchainHeight << std::endl;
+            blockchain->AddBlock(block);
 
-        // TODO: store the block in the blockchain database
+            // remove mined transactions from mempool
+            mempool.RemoveBlockTransactions(block);
+
+            // update cached height
+            blockchainHeight++;
+            std::cout << "[node] Stored block " << blockHash.substr(0, 16)
+                      << "... (height=" << blockchainHeight << ")" << std::endl;
+
+            // check if sync is complete
+            if (syncing && peerState.peer->GetRemoteAddress() == syncPeerAddr) {
+                if (blockchainHeight >= peerState.remoteHeight) {
+                    std::cout << "[node] Sync complete! Reindexing UTXO set..." << std::endl;
+
+                    UTXOSet utxoSet(blockchain.get());
+                    utxoSet.Reindex();
+
+                    syncing = false;
+                    syncPeerAddr.clear();
+                    std::cout << "[node] UTXO reindex complete. Chain is up to date at height "
+                              << blockchainHeight << std::endl;
+                }
+            }
+        }
     } catch (const std::exception& e) {
         std::cerr << "[node] Failed to process block from " << peerState.peer->GetRemoteAddress()
                   << ": " << e.what() << std::endl;
@@ -245,6 +431,10 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
         HandlePong(peerState, msg.GetPayload());
     } else if (cmd == CMD_INV) {
         HandleInv(peerState, msg.GetPayload());
+    } else if (cmd == CMD_GETBLOCKS) {
+        HandleGetBlocks(peerState, msg.GetPayload());
+    } else if (cmd == CMD_GETDATA) {
+        HandleGetData(peerState, msg.GetPayload());
     } else if (cmd == CMD_TX) {
         HandleTx(peerState, msg.GetPayload());
     } else if (cmd == CMD_BLOCK) {
