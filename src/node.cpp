@@ -16,14 +16,18 @@
 #include "transaction.h"
 #include "utils.h"
 #include "utxoSet.h"
+#include "wallet.h"
 
-Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort)
+using json = nlohmann::json;
+
+Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort, const std::string& minerAddress)
     : port(port),
       ip(ip),
       server(port),
       running(false),
       blockchainHeight(ComputeBlockchainHeight()),
-      rpcServer(rpcPort) {
+      rpcServer(rpcPort),
+      minerAddress(minerAddress) {
     // open persistent blockchain handle if the database exists
     if (Blockchain::DBExists()) {
         try {
@@ -78,9 +82,9 @@ bool Node::VerifyTransaction(const Transaction& tx) {
 }
 
 void Node::RegisterRPCMethods() {
-    rpcServer.RegisterMethod("getmempool", [this]() -> nlohmann::json {
+    rpcServer.RegisterMethod("getmempool", [this](const json&) -> json {
         auto ids = mempool.GetTransactionIDs();
-        nlohmann::json result;
+        json result;
         result["size"] = ids.size();
         result["transactions"] = std::move(ids);
 
@@ -88,10 +92,10 @@ void Node::RegisterRPCMethods() {
     });
 
     rpcServer.RegisterMethod("getblockcount",
-                             [this]() -> nlohmann::json { return blockchainHeight.load(); });
+                             [this](const json&) -> json { return blockchainHeight.load(); });
 
-    rpcServer.RegisterMethod("getsyncing", [this]() -> nlohmann::json {
-        nlohmann::json result;
+    rpcServer.RegisterMethod("getsyncing", [this](const json&) -> json {
+        json result;
         result["syncing"] = syncing.load();
         result["height"] = blockchainHeight.load();
         if (syncing) {
@@ -99,6 +103,58 @@ void Node::RegisterRPCMethods() {
             result["syncPeer"] = syncPeerAddr;
         }
         return result;
+    });
+
+    // build and submit a transaction from a local wallet address to the mempool
+    rpcServer.RegisterMethod("sendtx", [this](const json& params) -> json {
+        std::string from = params.value("from", "");
+        std::string to = params.value("to", "");
+        int amount = params.value("amount", 0);
+
+        if (from.empty()) throw std::runtime_error("Missing 'from' parameter");
+        if (to.empty()) throw std::runtime_error("Missing 'to' parameter");
+        if (amount <= 0) throw std::runtime_error("'amount' must be positive");
+
+        if (!Wallet::ValidateAddress(from)) throw std::runtime_error("Invalid 'from' address");
+        if (!Wallet::ValidateAddress(to)) throw std::runtime_error("Invalid 'to' address");
+
+        Transaction tx;
+        {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (!blockchain) throw std::runtime_error("No blockchain available");
+            UTXOSet utxoSet(blockchain.get());
+            tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
+        }
+
+        std::string txid = ByteArrayToHexString(tx.GetID());
+
+        if (mempool.Contains(txid)) {
+            return json{{"txid", txid}, {"status", "already in mempool"}};
+        }
+
+        mempool.AddTransaction(tx);
+        minerCV.notify_one();
+        RelayTransaction(tx, "");
+
+        std::cout << "[rpc] sendtx: submitted tx " << txid << std::endl;
+        return json{{"txid", txid}};
+    });
+
+    // mine one block from the current mempool on demand
+    rpcServer.RegisterMethod("mine", [this](const json& params) -> json {
+        std::string address = params.value("address", "");
+        if (address.empty()) throw std::runtime_error("Missing 'address' parameter");
+        if (!Wallet::ValidateAddress(address)) throw std::runtime_error("Invalid miner address");
+
+        MineBlock(address);
+
+        std::string tipHash;
+        {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (blockchain) tipHash = ByteArrayToHexString(blockchain->GetTip());
+        }
+
+        return json{{"hash", tipHash}, {"height", blockchainHeight.load()}};
     });
 }
 
@@ -379,6 +435,7 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
         }
 
         mempool.AddTransaction(tx);
+        minerCV.notify_one();
 
         // flood the inv to all other peers
         RelayTransaction(tx, peerState.peer->GetRemoteAddress());
@@ -430,6 +487,7 @@ void Node::BroadcastTransaction(const Transaction& tx) {
 
     if (!mempool.Contains(txid)) {
         mempool.AddTransaction(tx);
+        minerCV.notify_one();
     }
 
     // empty source
@@ -697,6 +755,115 @@ void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
     }
 }
 
+void Node::MineBlock(const std::string& address) {
+    if (syncing.load()) {
+        throw std::runtime_error("Currently syncing, cannot mine");
+    }
+
+    // snapshot the mempool
+    auto mempoolTxs = mempool.GetTransactions();
+
+    // build the transaction list and read the current tip under the lock
+    std::vector<Transaction> txs;
+    std::vector<uint8_t> prevHash;
+    {
+        std::lock_guard<std::mutex> lock(blockchainMutex);
+        if (!blockchain) throw std::runtime_error("No blockchain available for mining");
+
+        prevHash = blockchain->GetTip();
+
+        // coinbase reward goes to the miner's address
+        txs.push_back(Transaction::NewCoinbaseTX(address, ""));
+
+        for (const auto& [txid, tx] : mempoolTxs) {
+            if (blockchain->VerifyTransaction(&tx)) {
+                txs.push_back(tx);
+            } else {
+                std::cerr << "[miner] Dropping invalid tx " << txid.substr(0, 16) << "..."
+                          << std::endl;
+            }
+        }
+    }
+
+    std::cout << "[miner] Starting PoW with " << (txs.size() - 1) << " mempool tx(s)..."
+              << std::endl;
+
+    // Block constructor runs PoW
+    Block minedBlock(txs, prevHash);
+
+    // persist, update UTXO, and clean mempool under the lock
+    {
+        std::lock_guard<std::mutex> lock(blockchainMutex);
+        if (!blockchain) throw std::runtime_error("Blockchain unavailable after mining");
+
+        blockchain->AddBlock(minedBlock);
+
+        UTXOSet utxoSet(blockchain.get());
+        utxoSet.Update(minedBlock);
+
+        mempool.RemoveBlockTransactions(minedBlock);
+        blockchainHeight++;
+    }
+
+    std::string hashStr = ByteArrayToHexString(minedBlock.GetHash());
+    std::cout << "[miner] Mined block " << hashStr.substr(0, 16)
+              << "... (height=" << blockchainHeight << ")" << std::endl;
+
+    BroadcastBlock(minedBlock);
+}
+
+void Node::BroadcastBlock(const Block& block) {
+    InvVector invVec{InvType::Block, block.GetHash()};
+    MessageInv invMsg({invVec});
+    Message msg(MAGIC_CUSTOM, CMD_INV, invMsg.Serialize());
+
+    std::string hashStr = ByteArrayToHexString(block.GetHash());
+
+    std::lock_guard<std::mutex> lock(peersMutex);
+    for (const auto& peerState : peers) {
+        if (!peerState->peer->IsConnected()) continue;
+        if (!peerState->handshakeComplete) continue;
+
+        try {
+            peerState->peer->SendMessage(msg);
+            std::cout << "[miner] Announced block " << hashStr.substr(0, 16) << "... to "
+                      << peerState->peer->GetRemoteAddress() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[miner] Failed to announce block to "
+                      << peerState->peer->GetRemoteAddress() << ": " << e.what() << std::endl;
+        }
+    }
+}
+
+void Node::RunMinerLoop() {
+    std::cout << "[miner] Background mining thread started (reward → " << minerAddress << ")"
+              << std::endl;
+
+    while (running) {
+        {
+            std::unique_lock<std::mutex> lock(minerCVMtx);
+            // sleep until a transaction arrives or the node shuts down, and wakes up just in case
+            // every 60 seconds
+            minerCV.wait_for(lock, std::chrono::seconds(MINER_CV_TIMEOUT_SECS),
+                             [this] { return !running || mempool.GetCount() > 0; });
+        }
+
+        if (!running) break;
+        if (mempool.GetCount() == 0) continue;
+
+        try {
+            std::cout << "[miner] " << mempool.GetCount() << " tx(s) pending, mining..."
+                      << std::endl;
+            MineBlock(minerAddress);
+        } catch (const std::exception& e) {
+            // chain may have moved during PoW, so we retry next cycle
+            std::cerr << "[miner] Mining cycle error: " << e.what() << std::endl;
+        }
+    }
+
+    std::cout << "[miner] Background mining thread stopped" << std::endl;
+}
+
 void Node::Start(const std::string& seedAddr) {
     server.Start();
     running = true;
@@ -709,6 +876,13 @@ void Node::Start(const std::string& seedAddr) {
 
     // start background cleanup of disconnected peers
     cleanupThread = std::thread([this]() { RunCleanupLoop(); });
+
+    // start background miner if a reward address was configured
+    if (!minerAddress.empty()) {
+        minerThread = std::thread([this]() { RunMinerLoop(); });
+        std::cout << "[node] Background miner enabled (reward → " << minerAddress << ")"
+                  << std::endl;
+    }
 
     // outbound connection (connect to seed node if specified)
     if (!seedAddr.empty()) {
@@ -762,12 +936,16 @@ void Node::Start(const std::string& seedAddr) {
 
 void Node::Stop() {
     running = false;
+    minerCV.notify_all();
     server.Stop();
     rpcServer.Stop();
 
-    // join the cleanup thread first
+    // join background threads
     if (cleanupThread.joinable()) {
         cleanupThread.join();
+    }
+    if (minerThread.joinable()) {
+        minerThread.join();
     }
 
     // copy peers under lock, disconnect and wake all monitor threads

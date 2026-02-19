@@ -23,6 +23,9 @@ inline constexpr size_t MAX_PEERS = 125;
 inline constexpr int PING_INTERVAL_SECS = 120;
 inline constexpr int PING_TIMEOUT_SECS = 30;
 
+// timeout for the miner's condition variable just incase we miss a notification
+inline constexpr int MINER_CV_TIMEOUT_SECS = 60;
+
 // tracks a peer connection, handshake state, and liveliness and thread
 struct PeerState {
         std::unique_ptr<Peer> peer;
@@ -97,6 +100,15 @@ class Node {
         void RunCleanupLoop();
         std::thread cleanupThread;
 
+        // mining
+        std::string minerAddress;
+        std::thread minerThread;
+        std::mutex minerCVMtx;
+        std::condition_variable minerCV;
+        void RunMinerLoop();
+
+        void BroadcastBlock(const Block& block);
+
         void RegisterRPCMethods();
 
         static int32_t ComputeBlockchainHeight();
@@ -104,7 +116,8 @@ class Node {
         static bool VerifyTransaction(const Transaction& tx);
 
     public:
-        Node(const std::string& ip, uint16_t port, uint16_t rpcPort = DEFAULT_RPC_PORT);
+        Node(const std::string& ip, uint16_t port, uint16_t rpcPort = DEFAULT_RPC_PORT,
+             const std::string& minerAddress = "");
         ~Node();
 
         Node(const Node&) = delete;
@@ -118,6 +131,9 @@ class Node {
 
         // when a transaction is created locally on this node, it is broadcast to all peers
         void BroadcastTransaction(const Transaction& tx);
+
+        // mine one block from the current mempool, store it, and relay to peers
+        void MineBlock(const std::string& address);
 
         void Stop();
 };

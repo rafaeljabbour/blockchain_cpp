@@ -13,7 +13,7 @@ RPCServer::RPCServer(uint16_t port) : port(port), listenSockfd(-1), running(fals
 
 RPCServer::~RPCServer() { Stop(); }
 
-void RPCServer::RegisterMethod(const std::string& name, std::function<json()> handler) {
+void RPCServer::RegisterMethod(const std::string& name, std::function<json(const json&)> handler) {
     methods[name] = std::move(handler);
 }
 
@@ -50,9 +50,15 @@ void RPCServer::HandleConnection(int clientfd) {
         auto id = req.value("id", json(nullptr));
         std::string method = req.value("method", "");
 
+        // extract params and normalise empty array to empty object
+        json params = req.value("params", json::object());
+        if (params.is_array() && params.empty()) {
+            params = json::object();
+        }
+
         auto it = methods.find(method);
         if (it != methods.end()) {
-            json result = it->second();
+            json result = it->second(params);
             response = {{"jsonrpc", "2.0"}, {"result", result}, {"id", id}};
         } else {
             response = {{"jsonrpc", "2.0"},
@@ -161,7 +167,7 @@ void RPCServer::Stop() {
     }
 }
 
-json RPCCall(uint16_t port, const std::string& method) {
+json RPCCall(uint16_t port, const std::string& method, const json& params) {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         throw std::runtime_error("Failed to create RPC client socket");
@@ -184,7 +190,7 @@ json RPCCall(uint16_t port, const std::string& method) {
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     // build and send JSON-RPC request
-    json request = {{"jsonrpc", "2.0"}, {"method", method}, {"params", json::array()}, {"id", 1}};
+    json request = {{"jsonrpc", "2.0"}, {"method", method}, {"params", params}, {"id", 1}};
 
     std::string requestStr = request.dump() + "\n";
 

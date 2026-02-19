@@ -25,7 +25,8 @@ void CLI::printUsage() {
     std::cout << "  reindexutxo - Rebuilds the UTXO set\n";
     std::cout << "  send -from FROM -to TO -amount AMOUNT - Send AMOUNT of coins from FROM address "
                  "to TO\n";
-    std::cout << "  startnode -port PORT [-seed IP:PORT] [-rpcport PORT] - Start a network node\n";
+    std::cout << "  startnode -port PORT [-seed IP:PORT] [-rpcport PORT] [-mine -mineraddress ADDR]"
+                 " - Start a network node\n";
     std::cout << "\nGlobal flags:\n";
     std::cout << "  -datadir DIR - Set the data directory (default: ./data)\n";
 }
@@ -125,8 +126,9 @@ void CLI::send(const std::string& from, const std::string& to, int amount) {
     std::cout << "Success!" << std::endl;
 }
 
-void CLI::startNode(uint16_t port, const std::string& seedAddr, uint16_t rpcPort) {
-    Node node("0.0.0.0", port, rpcPort);
+void CLI::startNode(uint16_t port, const std::string& seedAddr, uint16_t rpcPort,
+                    const std::string& minerAddress) {
+    Node node("0.0.0.0", port, rpcPort, minerAddress);
 
     // handles seed connection and then enters the accept loop
     node.Start(seedAddr);
@@ -234,21 +236,32 @@ void CLI::run(int argc, char* argv[]) {
         uint16_t port = static_cast<uint16_t>(std::stoi(cmdArgv[2]));
         std::string seedAddr;
         uint16_t rpcPort = DEFAULT_RPC_PORT;
+        std::string minerAddress;
+        bool mineEnabled = false;
 
         // parse optional flags
-        for (int i = 3; i < cmdArgc; i += 2) {
-            if (i + 1 >= cmdArgc) {
-                break;
-            }
+        for (int i = 3; i < cmdArgc; i++) {
             std::string flag = cmdArgv[i];
-            if (flag == "-seed") {
-                seedAddr = cmdArgv[i + 1];
-            } else if (flag == "-rpcport") {
-                rpcPort = static_cast<uint16_t>(std::stoi(cmdArgv[i + 1]));
+            if (flag == "-mine") {
+                mineEnabled = true;
+            } else if (i + 1 < cmdArgc) {
+                if (flag == "-seed") {
+                    seedAddr = cmdArgv[++i];
+                } else if (flag == "-rpcport") {
+                    rpcPort = static_cast<uint16_t>(std::stoi(cmdArgv[++i]));
+                } else if (flag == "-mineraddress") {
+                    minerAddress = cmdArgv[++i];
+                }
             }
         }
 
-        startNode(port, seedAddr, rpcPort);
+        if (mineEnabled && minerAddress.empty()) {
+            std::cout << "Error: -mine requires -mineraddress ADDRESS\n";
+            printUsage();
+            return;
+        }
+
+        startNode(port, seedAddr, rpcPort, minerAddress);
     } else {
         std::cout << "Error: unknown command '" << command << "'\n";
         printUsage();

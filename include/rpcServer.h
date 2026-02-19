@@ -23,7 +23,7 @@ class RPCServer {
         std::thread serverThread;   // thread that runs accept loop
 
         // maps method names to handler functions
-        std::map<std::string, std::function<nlohmann::json()>> methods;
+        std::map<std::string, std::function<json(const json&)>> methods;
 
         void AcceptLoop();
         void HandleConnection(int clientfd);
@@ -35,14 +35,14 @@ class RPCServer {
         RPCServer(const RPCServer&) = delete;
         RPCServer& operator=(const RPCServer&) = delete;
 
-        // to registers an RPC method by name
-        void RegisterMethod(const std::string& name, std::function<nlohmann::json()> handler);
+        // registers an RPC method by name, with optional parameters
+        void RegisterMethod(const std::string& name, std::function<json(const json&)> handler);
 
         void Start();
         void Stop();
 };
 
-// connects to localhost on the given port and calls method
-json RPCCall(uint16_t port, const std::string& method);
+// connects to localhost on the given port and calls method with optional parameters
+json RPCCall(uint16_t port, const std::string& method, const json& params = json::object());
 
 #endif
