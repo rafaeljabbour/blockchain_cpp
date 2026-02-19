@@ -114,6 +114,8 @@ void Peer::WriteAll(const std::vector<uint8_t>& data) {
 }
 
 void Peer::SendMessage(const Message& msg) {
+    std::lock_guard<std::mutex> lock(sendMtx);
+
     if (!connected) {
         throw std::runtime_error("Not connected to " + GetRemoteAddress());
     }

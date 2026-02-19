@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,9 @@ class Peer {
         std::string remoteIP;
         uint16_t remotePort;
         bool connected;
+
+        // protects concurrent sends from reader and monitor threads
+        std::mutex sendMtx;
 
         std::vector<uint8_t> ReadExact(size_t count);
         void WriteAll(const std::vector<uint8_t>& data);

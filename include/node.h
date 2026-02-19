@@ -64,7 +64,7 @@ class Node {
 
         std::atomic<bool> syncing{false};
         // protected by blockchainMutex
-        std::string syncPeerAddr;  
+        std::string syncPeerAddr;
 
         std::vector<std::shared_ptr<PeerState>> peers;
         std::mutex peersMutex;
@@ -85,6 +85,8 @@ class Node {
         void HandleGetData(PeerState& peerState, const std::vector<uint8_t>& payload);
 
         void SendVersion(PeerState& peerState);
+
+        void RelayTransaction(const Transaction& tx, const std::string& sourcePeerAddr);
 
         void MonitorPeer(std::shared_ptr<PeerState> peerState);
 
@@ -113,6 +115,9 @@ class Node {
 
         // starts listening and/or connects to a seed node
         void Start(const std::string& seedAddr = "");
+
+        // when a transaction is created locally on this node, it is broadcast to all peers
+        void BroadcastTransaction(const Transaction& tx);
 
         void Stop();
 };

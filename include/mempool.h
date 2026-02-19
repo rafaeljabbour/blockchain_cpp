@@ -25,6 +25,7 @@ class Mempool {
         std::map<std::string, Transaction> GetTransactions() const;
         std::vector<std::string> GetTransactionIDs() const;
         std::optional<Transaction> FindTransaction(const std::string& txid) const;
+        bool Contains(const std::string& txid) const;
         size_t GetCount() const;
 };
 

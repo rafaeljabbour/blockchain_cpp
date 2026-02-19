@@ -83,7 +83,7 @@ void Node::RegisterRPCMethods() {
         nlohmann::json result;
         result["size"] = ids.size();
         result["transactions"] = std::move(ids);
-        
+
         return result;
     });
 
@@ -208,8 +208,33 @@ void Node::HandleInv(PeerState& peerState, const std::vector<uint8_t>& payload) 
     std::cout << "[node] Received inv with " << +inv.GetCount() << " items from "
               << peerState.peer->GetRemoteAddress() << std::endl;
 
-    // reply with getdata for all announced objects
-    MessageGetData getData(inv.GetInventory());
+    // only request objects we don't already have
+    std::vector<InvVector> toRequest;
+    toRequest.reserve(inv.GetInventory().size());
+
+    for (const auto& item : inv.GetInventory()) {
+        // if item is a transaction, check if we already have it
+        if (item.type == InvType::Tx) {
+            std::string txid = ByteArrayToHexString(item.hash);
+            // check if we already have it
+            if (!mempool.Contains(txid)) {
+                toRequest.push_back(item);
+            } else {
+                std::cout << "[node] Already have tx " << txid.substr(0, 16) << "..., skipping"
+                          << std::endl;
+            }
+        }
+        // if item is a block, add it to the request list without checking if we already have it
+        else {
+            toRequest.push_back(item);
+        }
+    }
+
+    if (toRequest.empty()) {
+        return;
+    }
+
+    MessageGetData getData(toRequest);
     Message msg(MAGIC_CUSTOM, CMD_GETDATA, getData.Serialize());
     peerState.peer->SendMessage(msg);
 
@@ -341,17 +366,74 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
         std::cout << "[node] Received transaction " << txid << " from "
                   << peerState.peer->GetRemoteAddress() << std::endl;
 
-        // verification before the mempool insertion
+        // ignore transactions already in the mempool
+        if (mempool.Contains(txid)) {
+            std::cout << "[node] Already have tx " << txid.substr(0, 16) << "..., ignoring"
+                      << std::endl;
+            return;
+        }
+
         if (!VerifyTransaction(tx)) {
             std::cerr << "[node] Rejected invalid transaction " << txid << std::endl;
             return;
         }
 
         mempool.AddTransaction(tx);
+
+        // flood the inv to all other peers
+        RelayTransaction(tx, peerState.peer->GetRemoteAddress());
     } catch (const std::exception& e) {
         std::cerr << "[node] Failed to deserialize tx from " << peerState.peer->GetRemoteAddress()
                   << ": " << e.what() << std::endl;
     }
+}
+
+void Node::RelayTransaction(const Transaction& tx, const std::string& sourcePeerAddr) {
+    InvVector invVec{InvType::Tx, tx.GetID()};
+    MessageInv invMsg({invVec});
+    Message msg(MAGIC_CUSTOM, CMD_INV, invMsg.Serialize());
+
+    std::lock_guard<std::mutex> lock(peersMutex);
+    for (const auto& peerState : peers) {
+        // skip if disconnected but not removed from the list
+        if (!peerState->peer->IsConnected()) {
+            continue;
+        }
+        // skip if not exchanged verack
+        if (!peerState->handshakeComplete) {
+            continue;
+        }
+        // skip the source peer
+        if (peerState->peer->GetRemoteAddress() == sourcePeerAddr) {
+            continue;
+        }
+
+        try {
+            peerState->peer->SendMessage(msg);
+            std::cout << "[node] Relayed tx " << ByteArrayToHexString(tx.GetID()).substr(0, 16)
+                      << "... inv to " << peerState->peer->GetRemoteAddress() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[node] Failed to relay tx inv to " << peerState->peer->GetRemoteAddress()
+                      << ": " << e.what() << std::endl;
+        }
+    }
+}
+
+void Node::BroadcastTransaction(const Transaction& tx) {
+    std::string txid = ByteArrayToHexString(tx.GetID());
+
+    if (!VerifyTransaction(tx)) {
+        std::cerr << "[node] BroadcastTransaction: rejected invalid transaction " << txid
+                  << std::endl;
+        return;
+    }
+
+    if (!mempool.Contains(txid)) {
+        mempool.AddTransaction(tx);
+    }
+
+    // empty source
+    RelayTransaction(tx, "");
 }
 
 void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload) {

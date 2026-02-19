@@ -54,6 +54,11 @@ std::optional<Transaction> Mempool::FindTransaction(const std::string& txid) con
     return std::nullopt;
 }
 
+bool Mempool::Contains(const std::string& txid) const {
+    std::lock_guard<std::mutex> lock(mtx);
+    return transactions.find(txid) != transactions.end();
+}
+
 size_t Mempool::GetCount() const {
     std::lock_guard<std::mutex> lock(mtx);
     return transactions.size();
