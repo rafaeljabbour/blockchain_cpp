@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "peer.h"
+class Peer;
 
 // listens on a TCP port and accepts incoming connections as Peers.
 class Server {
