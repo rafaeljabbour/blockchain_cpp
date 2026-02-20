@@ -8,6 +8,8 @@
 #include <iostream>
 #include <stdexcept>
 
+#include "peer.h"
+
 Server::Server(uint16_t port) : listenSockfd(-1), port(port), running(false) {}
 
 Server::~Server() { Stop(); }

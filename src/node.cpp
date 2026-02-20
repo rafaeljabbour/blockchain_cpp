@@ -6,6 +6,7 @@
 
 #include "blockchain.h"
 #include "blockchainIterator.h"
+#include "merkleTree.h"
 #include "message.h"
 #include "messageGetBlocks.h"
 #include "messageInv.h"
@@ -13,8 +14,8 @@
 #include "messageVerack.h"
 #include "messageVersion.h"
 #include "proofOfWork.h"
+#include "serialization.h"
 #include "transaction.h"
-#include "utils.h"
 #include "utxoSet.h"
 #include "wallet.h"
 
@@ -138,6 +139,56 @@ void Node::RegisterRPCMethods() {
 
         std::cout << "[rpc] sendtx: submitted tx " << txid << std::endl;
         return json{{"txid", txid}};
+    });
+
+    // a lightweight (SPV) client can verify the proof without the full blockchain.
+    rpcServer.RegisterMethod("getmerkleproof", [this](const json& params) -> json {
+        std::string txidHex = params.value("txid", "");
+        if (txidHex.empty()) throw std::runtime_error("Missing 'txid' parameter");
+
+        std::vector<uint8_t> txid = HexStringToByteArray(txidHex);
+
+        std::lock_guard<std::mutex> lock(blockchainMutex);
+        if (!blockchain) throw std::runtime_error("No blockchain available");
+
+        // scan newest to oldest, tracking height
+        BlockchainIterator bci = blockchain->Iterator();
+        int32_t height = blockchainHeight.load() - 1;
+
+        while (bci.hasNext()) {
+            Block block = bci.Next();
+            const auto& txs = block.GetTransactions();
+
+            for (uint32_t i = 0; i < static_cast<uint32_t>(txs.size()); i++) {
+                if (txs[i].GetID() != txid) {
+                    continue;
+                }
+
+                MerkleTree tree(txs);
+                MerkleProof proof = tree.GenerateProof(i);
+                proof.txid = txid;
+                proof.blockHash = block.GetHash();
+                proof.blockHeight = static_cast<uint32_t>(height);
+
+                json path = json::array();
+                for (const auto& step : proof.path) {
+                    path.push_back(
+                        {{"hash", ByteArrayToHexString(step.hash)}, {"isLeft", step.isLeft}});
+                }
+
+                return json{{"txid", txidHex},
+                            {"txHash", ByteArrayToHexString(proof.txHash)},
+                            {"txIndex", proof.txIndex},
+                            {"blockHash", ByteArrayToHexString(proof.blockHash)},
+                            {"blockHeight", proof.blockHeight},
+                            {"merkleRoot", ByteArrayToHexString(proof.merkleRoot)},
+                            {"path", path}};
+            }
+
+            height--;
+        }
+
+        throw std::runtime_error("Transaction not found: " + txidHex);
     });
 
     // mine one block from the current mempool on demand

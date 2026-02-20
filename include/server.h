@@ -1,6 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 
@@ -11,7 +12,7 @@ class Server {
     private:
         int listenSockfd;
         uint16_t port;
-        bool running;
+        std::atomic<bool> running;
 
     public:
         explicit Server(uint16_t port);
