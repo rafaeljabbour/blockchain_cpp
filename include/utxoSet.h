@@ -28,11 +28,11 @@ class UTXOSet {
         UTXOSet& operator=(const UTXOSet&) = delete;
 
         std::pair<int, std::map<std::string, std::vector<int>>> FindSpendableOutputs(
-            const std::vector<uint8_t>& pubKeyHash, int amount);
+            const std::vector<uint8_t>& pubKeyHash, int amount) const;
 
-        std::vector<TransactionOutput> FindUTXO(const std::vector<uint8_t>& pubKeyHash);
+        std::vector<TransactionOutput> FindUTXO(const std::vector<uint8_t>& pubKeyHash) const;
 
-        int CountTransactions();
+        int CountTransactions() const;
 
         void Reindex();
 

@@ -2,8 +2,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
-#include "utils.h"
+#include "config.h"
+#include "serialization.h"
 
 Wallets::Wallets() {
     if (WalletFileExists()) {
@@ -41,18 +43,20 @@ Wallet* Wallets::GetWallet(const std::string& address) {
 }
 
 void Wallets::LoadFromFile() {
-    if (!std::filesystem::exists(WALLET_FILE)) {
+    std::string walletPath = Config::GetWalletPath();
+
+    if (!std::filesystem::exists(walletPath)) {
         // File doesn't exist, which is fine for first run
         return;
     }
 
-    size_t fileSize = std::filesystem::file_size(WALLET_FILE);
+    size_t fileSize = std::filesystem::file_size(walletPath);
 
     if (fileSize == 0) {
         return;
     }
 
-    std::ifstream file(WALLET_FILE, std::ios::binary);
+    std::ifstream file(walletPath, std::ios::binary);
     if (!file) {
         throw std::runtime_error("Failed to open wallet file for reading");
     }
@@ -70,9 +74,10 @@ void Wallets::LoadFromFile() {
 void Wallets::SaveToFile() const {
     std::vector<uint8_t> data = Serialize();
 
-    std::filesystem::create_directories(std::filesystem::path(WALLET_FILE).parent_path());
+    std::string walletPath = Config::GetWalletPath();
+    std::filesystem::create_directories(std::filesystem::path(walletPath).parent_path());
 
-    std::ofstream file(WALLET_FILE, std::ios::binary | std::ios::trunc);
+    std::ofstream file(walletPath, std::ios::binary | std::ios::trunc);
     if (!file) {
         throw std::runtime_error("Failed to open wallet file for writing");
     }
@@ -84,7 +89,7 @@ void Wallets::SaveToFile() const {
     }
 }
 
-bool Wallets::WalletFileExists() { return std::filesystem::exists(WALLET_FILE); }
+bool Wallets::WalletFileExists() { return std::filesystem::exists(Config::GetWalletPath()); }
 
 std::vector<uint8_t> Wallets::Serialize() const {
     std::vector<uint8_t> serialized;

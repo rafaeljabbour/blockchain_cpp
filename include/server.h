@@ -1,0 +1,33 @@
+#ifndef SERVER_H
+#define SERVER_H
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+
+class Peer;
+
+// listens on a TCP port and accepts incoming connections as Peers.
+class Server {
+    private:
+        int listenSockfd;
+        uint16_t port;
+        std::atomic<bool> running;
+
+    public:
+        explicit Server(uint16_t port);
+        ~Server();
+
+        Server(const Server&) = delete;
+        Server& operator=(const Server&) = delete;
+
+        void Start();
+        void Stop();
+
+        std::unique_ptr<Peer> AcceptConnection();
+
+        bool IsRunning() const { return running; }
+        uint16_t GetPort() const { return port; }
+};
+
+#endif

@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "block.h"
+class Block;
 
 const int32_t targetBits = 17;
 const int32_t maxNonce = INT32_MAX;
@@ -30,10 +30,10 @@ class ProofOfWork {
         ProofOfWork& operator=(const ProofOfWork&) = delete;
 
         std::pair<int32_t, std::vector<uint8_t>> Run();
-        bool Validate();
+        bool Validate() const;
 
     private:
-        std::vector<uint8_t> PrepareData(int nonce);
+        std::vector<uint8_t> PrepareData(int32_t nonce) const;
 };
 
 #endif

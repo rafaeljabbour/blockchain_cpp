@@ -6,9 +6,11 @@
 
 #include <memory>
 #include <random>
+#include <stdexcept>
 
 #include "blockchain.h"
-#include "utils.h"
+#include "crypto.h"
+#include "serialization.h"
 #include "utxoSet.h"
 #include "wallet.h"
 #include "wallets.h"

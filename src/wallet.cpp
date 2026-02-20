@@ -7,9 +7,10 @@
 #include <openssl/params.h>
 
 #include <memory>
+#include <stdexcept>
 
 #include "base58.h"
-#include "utils.h"
+#include "crypto.h"
 
 // RAII type aliases resources
 using EVP_PKEY_CTX_ptr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;

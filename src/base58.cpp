@@ -4,9 +4,10 @@
 
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
-#include "utils.h"
+#include "serialization.h"
 
 // Bitcoin Base58 alphabet (no 0, O, I, l to avoid confusion)
 static const char BASE58_ALPHABET[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";

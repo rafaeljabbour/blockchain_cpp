@@ -2,42 +2,39 @@
 #define MERKLETREE_H
 
 #include <cstdint>
-#include <memory>
 #include <vector>
+
+#include "merkleProof.h"
 
 class Transaction;
 
-// node in the Merkle tree
-class MerkleNode {
-    public:
-        std::unique_ptr<MerkleNode> left;
-        std::unique_ptr<MerkleNode> right;
-        std::vector<uint8_t> data;  // Hash of the data
-
-        // tag type for constructing a node with data that is already hashed
-        struct PreHashed {};
-
-        // leaf node: hashes the raw data
-        explicit MerkleNode(const std::vector<uint8_t>& data);
-        // parent node: combines two children
-        MerkleNode(std::unique_ptr<MerkleNode> left, std::unique_ptr<MerkleNode> right);
-        // pre-hashed node: copies hash directly, used for duplicate intermediate nodes
-        MerkleNode(const std::vector<uint8_t>& hash, PreHashed);
-
-        ~MerkleNode() = default;
-};
-
-// Merkle tree
+// the tree is stored as a flat list of levels:
+// levels[0] = leaf hashes (SHA256 of each serialized tx)
+// levels[1] = parent hashes of pairs of leaves
+// levels[N] = [ root hash ]
 class MerkleTree {
     private:
-        std::unique_ptr<MerkleNode> rootNode;
+        std::vector<std::vector<std::vector<uint8_t>>> levels;
+
+        static std::vector<uint8_t> combineAndHash(const std::vector<uint8_t>& left,
+                                                   const std::vector<uint8_t>& right);
 
     public:
         explicit MerkleTree(const std::vector<Transaction>& transactions);
 
         ~MerkleTree() = default;
 
-        const std::vector<uint8_t>& GetRootHash() const { return rootNode->data; }
+        // prevent copying
+        MerkleTree(const MerkleTree&) = delete;
+        MerkleTree& operator=(const MerkleTree&) = delete;
+
+        MerkleTree(MerkleTree&&) = default;
+        MerkleTree& operator=(MerkleTree&&) = default;
+
+        const std::vector<uint8_t>& GetRootHash() const { return levels.back()[0]; }
+
+        MerkleProof GenerateProof(uint32_t txIndex) const;
+        static bool VerifyProof(const MerkleProof& proof);
 };
 
 #endif
