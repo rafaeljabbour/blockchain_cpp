@@ -3,7 +3,8 @@
 #include <cstring>
 #include <stdexcept>
 
-#include "utils.h"
+#include "crypto.h"
+#include "serialization.h"
 
 Message::Message(const std::array<uint8_t, MAGIC_LENGTH>& magic, const std::string& command,
                  const std::vector<uint8_t>& payload)

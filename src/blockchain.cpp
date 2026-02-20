@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 
 #include "blockchainIterator.h"
 #include "config.h"

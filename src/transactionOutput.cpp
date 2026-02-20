@@ -1,7 +1,9 @@
 #include "transactionOutput.h"
 
+#include <stdexcept>
+
 #include "base58.h"
-#include "utils.h"
+#include "serialization.h"
 #include "wallet.h"
 
 TransactionOutput::TransactionOutput(int value, const std::vector<uint8_t>& pubKeyHash)

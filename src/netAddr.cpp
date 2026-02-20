@@ -4,7 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "utils.h"
+#include "serialization.h"
 
 NetAddr::NetAddr(uint64_t services, const std::string& ipv4, uint16_t port)
     : time(0), services(services), port(port) {

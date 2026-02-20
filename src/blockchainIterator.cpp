@@ -1,5 +1,6 @@
 #include "blockchainIterator.h"
 
+#include <stdexcept>
 #include <vector>
 
 #include "block.h"

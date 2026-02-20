@@ -2,11 +2,12 @@
 
 #include <cstdint>
 #include <ctime>
+#include <stdexcept>
 #include <vector>
 
 #include "merkleTree.h"
 #include "proofOfWork.h"
-#include "utils.h"
+#include "serialization.h"
 
 Block::Block(const std::vector<Transaction>& transactions,
              const std::vector<uint8_t>& previousHash) {

@@ -1,6 +1,8 @@
 #include "transactionInput.h"
 
-#include "utils.h"
+#include <stdexcept>
+
+#include "serialization.h"
 #include "wallet.h"
 
 TransactionInput::TransactionInput(const std::vector<uint8_t>& txid, int vout,

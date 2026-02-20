@@ -3,8 +3,11 @@
 #include <openssl/bn.h>
 
 #include <iostream>
+#include <stdexcept>
 
-#include "utils.h"
+#include "block.h"
+#include "crypto.h"
+#include "serialization.h"
 
 ProofOfWork::ProofOfWork(const Block* block) : block(block), target(BN_new(), BN_free) {
     if (!target) {
@@ -14,7 +17,7 @@ ProofOfWork::ProofOfWork(const Block* block) : block(block), target(BN_new(), BN
     BN_lshift(target.get(), target.get(), 256 - targetBits);
 }
 
-std::vector<uint8_t> ProofOfWork::PrepareData(int nonce) {
+std::vector<uint8_t> ProofOfWork::PrepareData(int32_t nonce) const {
     std::vector<uint8_t> data;
 
     // previous block hash (32 bytes)
@@ -70,7 +73,7 @@ std::pair<int32_t, std::vector<uint8_t>> ProofOfWork::Run() {
     return {nonce, hash};
 }
 
-bool ProofOfWork::Validate() {
+bool ProofOfWork::Validate() const {
     BN_ptr hashInt(BN_new(), BN_free);
     if (!hashInt) {
         throw std::runtime_error("Failed to allocate BIGNUM for PoW validation");

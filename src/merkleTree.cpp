@@ -1,65 +1,92 @@
 #include "merkleTree.h"
 
+#include <stdexcept>
+#include <string>
+
+#include "crypto.h"
 #include "transaction.h"
-#include "utils.h"
 
-// leaf node constructor
-MerkleNode::MerkleNode(const std::vector<uint8_t>& data) : left(nullptr), right(nullptr) {
-    this->data = SHA256Hash(data);
-}
-
-// parent node constructor
-MerkleNode::MerkleNode(std::unique_ptr<MerkleNode> left, std::unique_ptr<MerkleNode> right)
-    : left(std::move(left)), right(std::move(right)) {
-    // concatenate children then hash
+std::vector<uint8_t> MerkleTree::combineAndHash(const std::vector<uint8_t>& left,
+                                                const std::vector<uint8_t>& right) {
     std::vector<uint8_t> combined;
-    combined.insert(combined.end(), this->left->data.begin(), this->left->data.end());
-    combined.insert(combined.end(), this->right->data.begin(), this->right->data.end());
-
-    this->data = SHA256Hash(combined);
+    combined.reserve(left.size() + right.size());
+    combined.insert(combined.end(), left.begin(), left.end());
+    combined.insert(combined.end(), right.begin(), right.end());
+    return SHA256Hash(combined);
 }
 
-// pre-hashed node constructor (for duplicating at intermediate levels)
-MerkleNode::MerkleNode(const std::vector<uint8_t>& hash, PreHashed)
-    : left(nullptr), right(nullptr), data(hash) {}
-
-// tree constructor
 MerkleTree::MerkleTree(const std::vector<Transaction>& transactions) {
-    // serialized transactions
-    std::vector<std::vector<uint8_t>> data;
+    if (transactions.empty()) {
+        throw std::invalid_argument("Cannot build Merkle tree from empty transaction list");
+    }
+
+    // at level 0, one leaf hash per transaction
+    std::vector<std::vector<uint8_t>> currentLevel;
+    currentLevel.reserve(transactions.size());
     for (const Transaction& tx : transactions) {
-        data.push_back(tx.Serialize());
+        currentLevel.push_back(SHA256Hash(tx.Serialize()));
     }
 
-    // if odd number of transactions, duplicate the last one
-    if (data.size() % 2 != 0) {
-        data.push_back(data.back());
+    // pad odd length levels by duplicating the last hash
+    if (currentLevel.size() % 2 != 0) {
+        currentLevel.push_back(currentLevel.back());
     }
 
-    // leaf nodes
-    std::vector<std::unique_ptr<MerkleNode>> nodes;
-    for (const auto& txData : data) {
-        nodes.push_back(std::make_unique<MerkleNode>(txData));
-    }
+    levels.push_back(currentLevel);
 
-    // construct tree bottom-up
-    while (nodes.size() > 1) {
-        // duplicate last node if odd count
-        if (nodes.size() % 2 != 0) {
-            nodes.push_back(
-                std::make_unique<MerkleNode>(nodes.back()->data, MerkleNode::PreHashed{}));
+    // reduce level by level until we reach the single root
+    while (currentLevel.size() > 1) {
+        if (currentLevel.size() % 2 != 0) {
+            currentLevel.push_back(currentLevel.back());
         }
 
-        std::vector<std::unique_ptr<MerkleNode>> newLevel;
-
-        for (size_t i = 0; i < nodes.size(); i += 2) {
-            auto left = std::move(nodes[i]);
-            auto right = std::move(nodes[i + 1]);
-            newLevel.push_back(std::make_unique<MerkleNode>(std::move(left), std::move(right)));
+        std::vector<std::vector<uint8_t>> nextLevel;
+        nextLevel.reserve(currentLevel.size() / 2);
+        for (size_t i = 0; i + 1 < currentLevel.size(); i += 2) {
+            nextLevel.push_back(combineAndHash(currentLevel[i], currentLevel[i + 1]));
         }
 
-        nodes = std::move(newLevel);
+        levels.push_back(nextLevel);
+        currentLevel = nextLevel;
     }
-
-    rootNode = std::move(nodes[0]);
 }
+
+MerkleProof MerkleTree::GenerateProof(uint32_t txIndex) const {
+    if (levels.empty() || txIndex >= levels[0].size()) {
+        throw std::out_of_range("txIndex " + std::to_string(txIndex) +
+                                " out of range (leaf level has " +
+                                std::to_string(levels[0].size()) + " entries)");
+    }
+
+    MerkleProof proof;
+    proof.txHash = levels[0][txIndex];
+    proof.txIndex = txIndex;
+    proof.merkleRoot = levels.back()[0];
+
+    uint32_t idx = txIndex;
+
+    // walk from the leaf level up, collecting the sibling at each level
+    for (size_t level = 0; level + 1 < levels.size(); level++) {
+        const auto& currentLevel = levels[level];
+
+        // both lines below get the sibling index
+        // uint32_t siblingIdx = (idx % 2 == 0) ? idx + 1 : idx - 1;
+        uint32_t siblingIdx = idx ^ 1;
+
+        // for odd length levels, the sibling is the duplicate
+        if (siblingIdx >= currentLevel.size()) {
+            siblingIdx = idx;
+        }
+
+        MerkleProofStep step;
+        step.hash = currentLevel[siblingIdx];
+        step.isLeft = (idx % 2 == 1);
+        proof.path.push_back(step);
+
+        idx /= 2;
+    }
+
+    return proof;
+}
+
+bool MerkleTree::VerifyProof(const MerkleProof& proof) { return VerifyMerkleProof(proof); }

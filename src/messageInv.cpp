@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-#include "utils.h"
+#include "serialization.h"
 
 // for the inventory vector
 std::vector<uint8_t> InvVector::Serialize() const {

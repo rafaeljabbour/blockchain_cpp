@@ -4,7 +4,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "utils.h"
+#include "serialization.h"
 
 MessageVersion::MessageVersion(const std::string& receiverIP, uint16_t receiverPort,
                                const std::string& senderIP, uint16_t senderPort,

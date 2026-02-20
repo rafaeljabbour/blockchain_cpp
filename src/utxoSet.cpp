@@ -4,6 +4,7 @@
 #include <leveldb/write_batch.h>
 
 #include <memory>
+#include <stdexcept>
 
 #include "block.h"
 #include "blockchain.h"
@@ -16,7 +17,7 @@ UTXOSet::UTXOSet(Blockchain* bc) : blockchain(bc) {
 }
 
 std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOutputs(
-    const std::vector<uint8_t>& pubKeyHash, int amount) {
+    const std::vector<uint8_t>& pubKeyHash, int amount) const {
     std::map<std::string, std::vector<int>> unspentOutputs;
     int accumulated = 0;
     bool found = false;
@@ -57,7 +58,7 @@ std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOu
     return {accumulated, unspentOutputs};
 }
 
-std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pubKeyHash) {
+std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pubKeyHash) const {
     std::vector<TransactionOutput> UTXOs;
 
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
@@ -88,7 +89,7 @@ std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pub
     return UTXOs;
 }
 
-int UTXOSet::CountTransactions() {
+int UTXOSet::CountTransactions() const {
     int counter = 0;
 
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));

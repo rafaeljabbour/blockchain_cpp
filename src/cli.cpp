@@ -2,6 +2,7 @@
 
 #include <ctime>
 #include <iostream>
+#include <stdexcept>
 
 #include "base58.h"
 #include "blockchain.h"
@@ -9,7 +10,7 @@
 #include "config.h"
 #include "node.h"
 #include "proofOfWork.h"
-#include "utils.h"
+#include "serialization.h"
 #include "utxoSet.h"
 #include "wallet.h"
 #include "wallets.h"

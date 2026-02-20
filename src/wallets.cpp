@@ -2,9 +2,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 #include "config.h"
-#include "utils.h"
+#include "serialization.h"
 
 Wallets::Wallets() {
     if (WalletFileExists()) {

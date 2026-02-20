@@ -3,7 +3,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "utils.h"
+#include "serialization.h"
 
 MessagePing::MessagePing(uint64_t nonce) : nonce(nonce) {}
 
