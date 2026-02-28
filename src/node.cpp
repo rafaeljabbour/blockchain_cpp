@@ -362,7 +362,7 @@ void Node::HandleGetBlocks(PeerState& peerState, const std::vector<uint8_t>& pay
             return;
         }
 
-        // build and send inv outside the lock
+        // build and send inventory outside the lock
         std::vector<InvVector> inventory;
         inventory.reserve(hashes.size());
         for (const auto& hash : hashes) {
