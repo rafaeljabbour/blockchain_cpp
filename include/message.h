@@ -11,19 +11,19 @@ inline constexpr uint32_t COMMAND_LENGTH = 12;
 inline constexpr uint32_t CHECKSUM_LENGTH = 4;
 
 // the magic number for the blockchain
-inline const std::array<uint8_t, MAGIC_LENGTH> MAGIC_CUSTOM = {0xCA, 0xFE, 0xBA, 0xBE};
+inline constexpr std::array<uint8_t, MAGIC_LENGTH> MAGIC_CUSTOM = {0xCA, 0xFE, 0xBA, 0xBE};
 
 // the message commands are max 12 bytes, null-padded
-inline const char CMD_VERSION[] = "version";
-inline const char CMD_VERACK[] = "verack";
-inline const char CMD_GETBLOCKS[] = "getblocks";
-inline const char CMD_INV[] = "inv";
-inline const char CMD_GETDATA[] = "getdata";
-inline const char CMD_BLOCK[] = "block";
-inline const char CMD_TX[] = "tx";
-inline const char CMD_ADDR[] = "addr";
-inline const char CMD_PING[] = "ping";
-inline const char CMD_PONG[] = "pong";
+inline constexpr const char CMD_VERSION[] = "version";
+inline constexpr const char CMD_VERACK[] = "verack";
+inline constexpr const char CMD_GETBLOCKS[] = "getblocks";
+inline constexpr const char CMD_INV[] = "inv";
+inline constexpr const char CMD_GETDATA[] = "getdata";
+inline constexpr const char CMD_BLOCK[] = "block";
+inline constexpr const char CMD_TX[] = "tx";
+inline constexpr const char CMD_ADDR[] = "addr";
+inline constexpr const char CMD_PING[] = "ping";
+inline constexpr const char CMD_PONG[] = "pong";
 
 class Message {
     private:

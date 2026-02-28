@@ -276,11 +276,13 @@ void CLI::printChain() {
     while (bci.hasNext()) {
         Block block = bci.Next();
 
-        std::cout << "Block " << ByteArrayToHexString(block.GetHash()) << std::endl;
+        std::cout << "Block: " << ByteArrayToHexString(block.GetHash()) << std::endl;
         std::cout << "Prev. block: " << ByteArrayToHexString(block.GetPreviousHash()) << std::endl;
+        std::cout << "Bits: " << block.GetBits() << "  (target = 1 << " << (256 - block.GetBits())
+                  << ")" << std::endl;
 
         ProofOfWork pow(&block);
-        std::cout << "PoW: " << std::boolalpha << pow.Validate() << std::endl;
+        std::cout << "PoW valid: " << std::boolalpha << pow.Validate() << std::endl;
         std::cout << std::endl;
 
         // print each transaction on that block

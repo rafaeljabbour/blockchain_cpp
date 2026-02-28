@@ -14,7 +14,7 @@ ProofOfWork::ProofOfWork(const Block* block) : block(block), target(BN_new(), BN
         throw std::runtime_error("Failed to allocate BIGNUM for PoW target");
     }
     BN_one(target.get());
-    BN_lshift(target.get(), target.get(), 256 - targetBits);
+    BN_lshift(target.get(), target.get(), 256 - block->GetBits());
 }
 
 std::vector<uint8_t> ProofOfWork::PrepareData(int32_t nonce) const {
@@ -32,7 +32,7 @@ std::vector<uint8_t> ProofOfWork::PrepareData(int32_t nonce) const {
     data.insert(data.end(), timestampBytes.begin(), timestampBytes.end());
 
     // target bits (8 bytes)
-    std::vector<uint8_t> targetBitsBytes = IntToHexByteArray(targetBits);
+    std::vector<uint8_t> targetBitsBytes = IntToHexByteArray(block->GetBits());
     data.insert(data.end(), targetBitsBytes.begin(), targetBitsBytes.end());
 
     // nonce (8 bytes)

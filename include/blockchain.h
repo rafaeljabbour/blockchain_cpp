@@ -24,7 +24,8 @@ class Blockchain {
         friend class UTXOSet;
 
     private:
-        std::vector<uint8_t> tip;         // hash of the last block
+        std::vector<uint8_t> tip;  // hash of the last block
+        int32_t tipHeight{0};      // height of tip, it will becached in memory and persisted to DB
         std::unique_ptr<leveldb::DB> db;  // leveldb for storing blocks (persistency)
 
     public:
@@ -45,13 +46,21 @@ class Blockchain {
 
         const std::vector<uint8_t>& GetTip() const { return tip; }
 
+        // zero based height of the chain (genesis = 0)
+        int32_t GetChainHeight() const;
+
+        // height of any block by hash and -1 if not found
+        int32_t GetBlockHeight(const std::vector<uint8_t>& hash) const;
+
+        int32_t GetNextWorkRequired(int32_t nextBlockHeight) const;
+
         std::map<std::string, TXOutputs> FindUTXO();
 
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
         void SignTransaction(Transaction* tx, Wallet* wallet);
         bool VerifyTransaction(const Transaction* tx);
 
-        BlockchainIterator Iterator();
+        BlockchainIterator Iterator() const;
 
         static bool DBExists();
         static std::unique_ptr<Blockchain> CreateBlockchain(const std::string& address);
