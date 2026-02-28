@@ -121,7 +121,7 @@ void Node::RegisterRPCMethods() {
         return json{{"txid", txid}};
     });
 
-    // a lightweight (SPV) client can verify the proof without the full blockchain.
+    // a lightweight (SPV) client can verify the proof without the full blockchain
     rpcServer.RegisterMethod("getmerkleproof", [this](const json& params) -> json {
         std::string txidHex = params.value("txid", "");
         if (txidHex.empty()) throw std::runtime_error("Missing 'txid' parameter");
