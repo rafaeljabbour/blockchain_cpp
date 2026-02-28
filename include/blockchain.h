@@ -59,6 +59,8 @@ class Blockchain {
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
         void SignTransaction(Transaction* tx, Wallet* wallet);
         bool VerifyTransaction(const Transaction* tx);
+        bool VerifyTransaction(const Transaction* tx,
+                               const std::map<std::string, Transaction>& blockCtx);
 
         BlockchainIterator Iterator() const;
 

@@ -338,12 +338,44 @@ bool Blockchain::VerifyTransaction(const Transaction* tx) {
         return true;
     }
 
-    std::map<std::string, Transaction> prevTXs;
+    if (tx->GetVin().empty() || tx->GetVout().empty()) {
+        return false;
+    }
 
+    std::map<std::string, Transaction> prevTXs;
     // collect all previous transactions being spent, the inputs this output is spending
     for (const auto& vin : tx->GetVin()) {
         Transaction prevTX = FindTransaction(vin.GetTxid());
         prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
+    }
+
+    return tx->Verify(prevTXs);
+}
+
+bool Blockchain::VerifyTransaction(const Transaction* tx,
+                                   const std::map<std::string, Transaction>& blockCtx) {
+    if (tx->IsCoinbase()) {
+        return true;
+    }
+
+    if (tx->GetVin().empty() || tx->GetVout().empty()) {
+        return false;
+    }
+
+    std::map<std::string, Transaction> prevTXs;
+
+    // collect all previous transactions being spent, the inputs this output is spending
+    for (const auto& vin : tx->GetVin()) {
+        std::string txidHex = ByteArrayToHexString(vin.GetTxid());
+
+        // check for intra block spending first
+        auto ctxIt = blockCtx.find(txidHex);
+        if (ctxIt != blockCtx.end()) {
+            prevTXs.insert({txidHex, ctxIt->second});
+        } else {
+            Transaction prevTX = FindTransaction(vin.GetTxid());
+            prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
+        }
     }
 
     return tx->Verify(prevTXs);

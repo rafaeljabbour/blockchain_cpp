@@ -458,9 +458,31 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             return;
         }
 
+        // cheap structural check before touching the blockchain
         if (!VerifyTransaction(tx)) {
-            std::cerr << "[node] Rejected invalid transaction " << txid << std::endl;
+            std::cerr << "[node] Rejected malformed transaction " << txid << std::endl;
             return;
+        }
+
+        // full signature and structural verification against previous outputs
+        if (!tx.IsCoinbase()) {
+            std::lock_guard<std::mutex> lock(blockchainMutex);
+            if (!blockchain) {
+                std::cerr << "[node] Rejected tx " << txid << ": no blockchain available"
+                          << std::endl;
+                return;
+            }
+            try {
+                if (!blockchain->VerifyTransaction(&tx)) {
+                    std::cerr << "[node] Rejected transaction " << txid << ": invalid signature"
+                              << std::endl;
+                    return;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "[node] Rejected transaction " << txid << ": " << e.what()
+                          << std::endl;
+                return;
+            }
         }
 
         mempool.AddTransaction(tx);
@@ -538,22 +560,34 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             return;
         }
 
-        // validate all transactions in the block
-        for (const auto& tx : block.GetTransactions()) {
-            if (!VerifyTransaction(tx)) {
-                std::cerr << "[node] Rejected block " << blockHash
-                          << ": contains invalid transaction " << ByteArrayToHexString(tx.GetID())
-                          << std::endl;
-                return;
-            }
-        }
-
         // persist block and check sync status under one lock
         {
             std::lock_guard<std::mutex> lock(blockchainMutex);
             if (!blockchain) {
                 std::cerr << "[node] Cannot store block: no blockchain" << std::endl;
                 return;
+            }
+
+            // full verification with topological ordering
+            std::map<std::string, Transaction> blockCtx;
+            for (const auto& tx : block.GetTransactions()) {
+                if (tx.IsCoinbase()) {
+                    blockCtx[ByteArrayToHexString(tx.GetID())] = tx;
+                    continue;
+                }
+                try {
+                    if (!blockchain->VerifyTransaction(&tx, blockCtx)) {
+                        std::cerr << "[node] Rejected block " << blockHash
+                                  << ": invalid signature in tx "
+                                  << ByteArrayToHexString(tx.GetID()) << std::endl;
+                        return;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "[node] Rejected block " << blockHash
+                              << ": tx verification failed: " << e.what() << std::endl;
+                    return;
+                }
+                blockCtx[ByteArrayToHexString(tx.GetID())] = tx;
             }
 
             blockchain->AddBlock(block);
