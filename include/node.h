@@ -97,21 +97,21 @@ class Node {
 
         void CleanupDisconnectedPeers();
 
-        void RunCleanupLoop();
-        std::thread cleanupThread;
+        std::mutex cleanupCVMtx;
+        std::condition_variable cleanupCV;
+        void RunCleanupLoop(std::stop_token stoken);
+        std::jthread cleanupThread;
 
         // mining
         std::string minerAddress;
-        std::thread minerThread;
+        std::jthread minerThread;
         std::mutex minerCVMtx;
         std::condition_variable minerCV;
-        void RunMinerLoop();
+        void RunMinerLoop(std::stop_token stoken);
 
         void BroadcastBlock(const Block& block);
 
         void RegisterRPCMethods();
-
-        static int32_t ComputeBlockchainHeight();
 
         static bool VerifyTransaction(const Transaction& tx);
 

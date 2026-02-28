@@ -9,11 +9,12 @@
 #include "proofOfWork.h"
 #include "serialization.h"
 
-Block::Block(const std::vector<Transaction>& transactions,
-             const std::vector<uint8_t>& previousHash) {
+Block::Block(const std::vector<Transaction>& transactions, const std::vector<uint8_t>& previousHash,
+             int32_t bits) {
     timestamp = std::time(nullptr);
     this->transactions = transactions;
     this->previousHash = previousHash;
+    this->bits = bits;
 
     ProofOfWork proofOfWork(this);
     std::pair<int32_t, std::vector<uint8_t>> powResult = proofOfWork.Run();
@@ -54,6 +55,9 @@ std::vector<uint8_t> Block::Serialize() const {
     // nonce (4 bytes)
     WriteUint32(serialized, static_cast<uint32_t>(nonce));
 
+    // bits (4 bytes)
+    WriteUint32(serialized, static_cast<uint32_t>(bits));
+
     return serialized;
 }
 
@@ -61,7 +65,8 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
     Block block;
     size_t offset = 0;
 
-    if (serialized.size() < 8 + 4 + 32 + 32 + 4) {
+    // 8 (timestamp) + 4 (txcount) + 32 (prevHash) + 32 (hash) + 4 (nonce) + 4 (bits)
+    if (serialized.size() < 8 + 4 + 32 + 32 + 4 + 4) {
         throw std::runtime_error("Block data too small to deserialize");
     }
 
@@ -89,8 +94,8 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
         offset += txSize;
     }
 
-    if (offset + 32 + 32 + 4 > serialized.size()) {
-        throw std::runtime_error("Block data truncated: missing hash or nonce");
+    if (offset + 32 + 32 + 4 + 4 > serialized.size()) {
+        throw std::runtime_error("Block data truncated: missing hash, nonce, or bits");
     }
 
     // previous hash (32 bytes)
@@ -105,6 +110,10 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
 
     // nonce (4 bytes)
     block.nonce = static_cast<int32_t>(ReadUint32(serialized, offset));
+    offset += 4;
+
+    // bits (4 bytes)
+    block.bits = static_cast<int32_t>(ReadUint32(serialized, offset));
 
     return block;
 }
@@ -116,5 +125,5 @@ std::vector<uint8_t> Block::HashTransactions() const {
 
 Block Block::NewGenesisBlock(const Transaction& coinbase) {
     std::vector<Transaction> transactions = {coinbase};
-    return Block(transactions, std::vector<uint8_t>(32, 0));
+    return Block(transactions, std::vector<uint8_t>(32, 0), INITIAL_BITS);
 }

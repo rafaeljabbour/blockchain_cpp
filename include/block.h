@@ -14,10 +14,11 @@ class Block {
         std::vector<uint8_t> previousHash;  // Stores hash of previous block
         std::vector<uint8_t> hash;
         int32_t nonce;  // counter to try different hashes in pow
+        int32_t bits;   // difficulty target for this block
 
     public:
         Block(const std::vector<Transaction>& transactions,
-              const std::vector<uint8_t>& previousHash);
+              const std::vector<uint8_t>& previousHash, int32_t bits);
         Block() = default;
 
         int64_t GetTimestamp() const { return timestamp; }
@@ -25,6 +26,7 @@ class Block {
         const std::vector<uint8_t>& GetPreviousHash() const { return previousHash; }
         const std::vector<uint8_t>& GetHash() const { return hash; }
         int32_t GetNonce() const { return nonce; }
+        int32_t GetBits() const { return bits; }
 
         static Block NewGenesisBlock(const Transaction& coinbase);
 

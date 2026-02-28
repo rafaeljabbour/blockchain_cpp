@@ -10,9 +10,14 @@
 
 #include "blockchainIterator.h"
 #include "config.h"
+#include "proofOfWork.h"
 #include "transactionOutput.h"
 #include "utils.h"
 #include "wallet.h"
+
+// RAII type alias for BIGNUM and BIGNUM context
+using BN_CTX_ptr = std::unique_ptr<BN_CTX, decltype(&BN_CTX_free)>;
+using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
 
 bool Blockchain::DBExists() {
     leveldb::DB* rawDb = nullptr;
@@ -45,6 +50,18 @@ Blockchain::Blockchain() {
     }
 
     tip = std::vector<uint8_t>(tipString.begin(), tipString.end());
+
+    std::vector<uint8_t> heightKey;
+    heightKey.push_back('h');
+    heightKey.insert(heightKey.end(), tip.begin(), tip.end());
+
+    std::string heightString;
+    status = db->Get(leveldb::ReadOptions(), ByteArrayToSlice(heightKey), &heightString);
+    if (!status.ok()) {
+        throw std::runtime_error("Error reading chain height: " + status.ToString());
+    }
+    std::vector<uint8_t> heightBytes(heightString.begin(), heightString.end());
+    tipHeight = static_cast<int32_t>(ReadUint32(heightBytes, 0));
 }
 
 std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& address) {
@@ -79,9 +96,17 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     key.push_back('b');
     key.insert(key.end(), genesisHash.begin(), genesisHash.end());
 
+    std::vector<uint8_t> genesisHeightKey;
+    genesisHeightKey.push_back('h');
+    genesisHeightKey.insert(genesisHeightKey.end(), genesisHash.begin(), genesisHash.end());
+
+    std::vector<uint8_t> genesisHeightBytes;
+    WriteUint32(genesisHeightBytes, 0);
+
     leveldb::WriteBatch batch;
     batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(genesisHash));
+    batch.Put(ByteArrayToSlice(genesisHeightKey), ByteArrayToSlice(genesisHeightBytes));
 
     status = tempDb->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
@@ -113,7 +138,10 @@ Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     std::vector<uint8_t> lastHash(lastHashString.begin(), lastHashString.end());
 
-    Block newBlock(transactions, lastHash);
+    // compute the correct difficulty for the new block before running PoW
+    int32_t nextBits = GetNextWorkRequired(GetChainHeight() + 1);
+
+    Block newBlock(transactions, lastHash, nextBits);
 
     std::vector<uint8_t> blockKey;
     // prefix for the Block
@@ -123,9 +151,17 @@ Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     std::vector<uint8_t> serialized = newBlock.Serialize();
 
+    std::vector<uint8_t> heightKey;
+    heightKey.push_back('h');
+    heightKey.insert(heightKey.end(), newHash.begin(), newHash.end());
+
+    std::vector<uint8_t> newHeightBytes;
+    WriteUint32(newHeightBytes, static_cast<uint32_t>(tipHeight + 1));
+
     leveldb::WriteBatch batch;
     batch.Put(ByteArrayToSlice(blockKey), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(newHash));
+    batch.Put(ByteArrayToSlice(heightKey), ByteArrayToSlice(newHeightBytes));
 
     status = db->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
@@ -133,6 +169,7 @@ Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
     }
 
     tip = newHash;
+    tipHeight++;
     return newBlock;
 }
 
@@ -152,15 +189,23 @@ void Blockchain::AddBlock(const Block& block) {
     std::string existing;
     leveldb::Status status = db->Get(leveldb::ReadOptions(), ByteArrayToSlice(key), &existing);
     if (status.ok()) {
-        return;  // already have it
+        return;
     }
 
     // store block and update tip atomically
     std::vector<uint8_t> serialized = block.Serialize();
 
+    std::vector<uint8_t> heightKey;
+    heightKey.push_back('h');
+    heightKey.insert(heightKey.end(), blockHash.begin(), blockHash.end());
+
+    std::vector<uint8_t> newHeightBytes;
+    WriteUint32(newHeightBytes, static_cast<uint32_t>(tipHeight + 1));
+
     leveldb::WriteBatch batch;
     batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
     batch.Put("l", ByteArrayToSlice(blockHash));
+    batch.Put(ByteArrayToSlice(heightKey), ByteArrayToSlice(newHeightBytes));
 
     status = db->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
@@ -168,6 +213,7 @@ void Blockchain::AddBlock(const Block& block) {
     }
 
     tip = blockHash;
+    tipHeight++;
 }
 
 Block Blockchain::GetBlock(const std::vector<uint8_t>& hash) const {
@@ -303,4 +349,88 @@ bool Blockchain::VerifyTransaction(const Transaction* tx) {
     return tx->Verify(prevTXs);
 }
 
-BlockchainIterator Blockchain::Iterator() { return BlockchainIterator(tip, db.get()); }
+BlockchainIterator Blockchain::Iterator() const { return BlockchainIterator(tip, db.get()); }
+
+int32_t Blockchain::GetChainHeight() const { return tipHeight; }
+
+int32_t Blockchain::GetBlockHeight(const std::vector<uint8_t>& hash) const {
+    std::vector<uint8_t> heightKey;
+    heightKey.push_back('h');
+    heightKey.insert(heightKey.end(), hash.begin(), hash.end());
+
+    std::string heightString;
+    leveldb::Status status =
+        db->Get(leveldb::ReadOptions(), ByteArrayToSlice(heightKey), &heightString);
+    if (!status.ok()) {
+        return -1;
+    }
+
+    std::vector<uint8_t> heightBytes(heightString.begin(), heightString.end());
+    return static_cast<int32_t>(ReadUint32(heightBytes, 0));
+}
+
+int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
+    // during genesis creation path
+    if (tip.empty() || tip == std::vector<uint8_t>(32, 0)) {
+        return INITIAL_BITS;
+    }
+
+    Block tipBlock = GetBlock(tip);
+
+    // after some time we need to adjust the difficulty of the next blocks
+    if (nextBlockHeight % RETARGET_INTERVAL != 0) {
+        return tipBlock.GetBits();
+    }
+
+    // walk back RETARGET_INTERVAL − 1 steps to find the anchor block
+    std::vector<uint8_t> anchorHash = tip;
+    for (int32_t i = 0; i < RETARGET_INTERVAL - 1; ++i) {
+        Block b = GetBlock(anchorHash);
+        anchorHash = b.GetPreviousHash();
+        // a redundancy check to ensure no issues
+        if (anchorHash == std::vector<uint8_t>(32, 0)) {
+            return tipBlock.GetBits();
+        }
+    }
+    Block anchorBlock = GetBlock(anchorHash);
+
+    int64_t actualTimespan = tipBlock.GetTimestamp() - anchorBlock.GetTimestamp();
+
+    // 4x adjustment cap to prevent any extreme changes
+    actualTimespan = std::max(actualTimespan, TARGET_TIMESPAN / 4);
+    actualTimespan = std::min(actualTimespan, TARGET_TIMESPAN * 4);
+
+    int32_t oldBits = tipBlock.GetBits();
+
+    // oldTarget = 1 << (256 − oldBits)
+    // newTarget = oldTarget × actualTimespan / TARGET_TIMESPAN
+    BN_CTX_ptr ctx(BN_CTX_new(), BN_CTX_free);
+    BN_ptr oldTarget(BN_new(), BN_free);
+    BN_ptr newTarget(BN_new(), BN_free);
+    BN_ptr bnActual(BN_new(), BN_free);
+    BN_ptr bnExpected(BN_new(), BN_free);
+
+    if (!ctx || !oldTarget || !newTarget || !bnActual || !bnExpected) {
+        throw std::runtime_error("Failed to allocate BIGNUM resources during retarget");
+    }
+
+    BN_one(oldTarget.get());
+    BN_lshift(oldTarget.get(), oldTarget.get(), 256 - oldBits);
+
+    BN_set_word(bnActual.get(), static_cast<BN_ULONG>(actualTimespan));
+    BN_set_word(bnExpected.get(), static_cast<BN_ULONG>(TARGET_TIMESPAN));
+
+    // newTarget = (old target × actual time) / expected time
+    BN_mul(newTarget.get(), oldTarget.get(), bnActual.get(), ctx.get());
+    BN_div(newTarget.get(), nullptr, newTarget.get(), bnExpected.get(), ctx.get());
+
+    // convert BIGNUM back to bits
+    int32_t newBits = 257 - static_cast<int32_t>(BN_num_bits(newTarget.get()));
+    newBits = std::max(MIN_BITS, std::min(MAX_BITS, newBits));
+
+    std::cout << "[blockchain] Retarget at height " << nextBlockHeight << ": bits " << oldBits
+              << " -> " << newBits << "  (actual=" << actualTimespan << "s"
+              << ", expected=" << TARGET_TIMESPAN << "s)" << std::endl;
+
+    return newBits;
+}

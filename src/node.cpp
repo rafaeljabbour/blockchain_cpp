@@ -26,13 +26,14 @@ Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort, const std::st
       ip(ip),
       server(port),
       running(false),
-      blockchainHeight(ComputeBlockchainHeight()),
+      blockchainHeight(-1),
       rpcServer(rpcPort),
       minerAddress(minerAddress) {
     // open persistent blockchain handle if the database exists
     if (Blockchain::DBExists()) {
         try {
             blockchain = std::make_unique<Blockchain>();
+            blockchainHeight.store(blockchain->GetChainHeight());
         } catch (const std::exception& e) {
             std::cerr << "[node] Warning: could not open blockchain: " << e.what() << std::endl;
         }
@@ -42,27 +43,6 @@ Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort, const std::st
 }
 
 Node::~Node() { Stop(); }
-
-int32_t Node::ComputeBlockchainHeight() {
-    try {
-        if (!Blockchain::DBExists()) {
-            return -1;
-        }
-
-        Blockchain bc;
-        BlockchainIterator bci = bc.Iterator();
-
-        int32_t height = 0;
-        while (bci.hasNext()) {
-            bci.Next();
-            height++;
-        }
-
-        return height;
-    } catch (const std::exception&) {
-        return -1;
-    }
-}
 
 bool Node::VerifyTransaction(const Transaction& tx) {
     if (tx.IsCoinbase()) {
@@ -151,9 +131,8 @@ void Node::RegisterRPCMethods() {
         std::lock_guard<std::mutex> lock(blockchainMutex);
         if (!blockchain) throw std::runtime_error("No blockchain available");
 
-        // scan newest to oldest, tracking height
+        // scan newest to oldest
         BlockchainIterator bci = blockchain->Iterator();
-        int32_t height = blockchainHeight.load() - 1;
 
         while (bci.hasNext()) {
             Block block = bci.Next();
@@ -168,7 +147,8 @@ void Node::RegisterRPCMethods() {
                 MerkleProof proof = tree.GenerateProof(i);
                 proof.txid = txid;
                 proof.blockHash = block.GetHash();
-                proof.blockHeight = static_cast<uint32_t>(height);
+                proof.blockHeight =
+                    static_cast<uint32_t>(blockchain->GetBlockHeight(block.GetHash()));
 
                 json path = json::array();
                 for (const auto& step : proof.path) {
@@ -184,8 +164,6 @@ void Node::RegisterRPCMethods() {
                             {"merkleRoot", ByteArrayToHexString(proof.merkleRoot)},
                             {"path", path}};
             }
-
-            height--;
         }
 
         throw std::runtime_error("Transaction not found: " + txidHex);
@@ -583,8 +561,7 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             // remove mined transactions from mempool
             mempool.RemoveBlockTransactions(block);
 
-            // update cached height
-            blockchainHeight++;
+            blockchainHeight.store(blockchain->GetChainHeight());
             std::cout << "[node] Stored block " << blockHash.substr(0, 16)
                       << "... (height=" << blockchainHeight << ")" << std::endl;
 
@@ -742,15 +719,17 @@ void Node::CleanupDisconnectedPeers() {
     }
 }
 
-void Node::RunCleanupLoop() {
-    while (running) {
-        std::this_thread::sleep_for(std::chrono::seconds(30));
-
-        if (!running) {
-            break;
+void Node::RunCleanupLoop(std::stop_token stoken) {
+    std::stop_callback wake(stoken, [this] { cleanupCV.notify_all(); });
+    while (!stoken.stop_requested()) {
+        {
+            std::unique_lock<std::mutex> lock(cleanupCVMtx);
+            cleanupCV.wait_for(lock, std::chrono::seconds(30),
+                               [&] { return stoken.stop_requested(); });
         }
-
-        CleanupDisconnectedPeers();
+        if (!stoken.stop_requested()) {
+            CleanupDisconnectedPeers();
+        }
     }
 }
 
@@ -836,11 +815,18 @@ void Node::MineBlock(const std::string& address) {
         }
     }
 
-    std::cout << "[miner] Starting PoW with " << (txs.size() - 1) << " mempool tx(s)..."
-              << std::endl;
+    // we determine difficulty for the next block
+    int32_t nextBits;
+    {
+        std::lock_guard<std::mutex> lock(blockchainMutex);
+        nextBits = blockchain->GetNextWorkRequired(blockchainHeight.load() + 1);
+    }
 
-    // Block constructor runs PoW
-    Block minedBlock(txs, prevHash);
+    std::cout << "[miner] Starting PoW with " << (txs.size() - 1) << " mempool tx(s)..."
+              << " (bits=" << nextBits << ")" << std::endl;
+
+    // PoW is outside the lock so peers can still communicate
+    Block minedBlock(txs, prevHash, nextBits);
 
     // persist, update UTXO, and clean mempool under the lock
     {
@@ -853,7 +839,7 @@ void Node::MineBlock(const std::string& address) {
         utxoSet.Update(minedBlock);
 
         mempool.RemoveBlockTransactions(minedBlock);
-        blockchainHeight++;
+        blockchainHeight.store(blockchain->GetChainHeight());
     }
 
     std::string hashStr = ByteArrayToHexString(minedBlock.GetHash());
@@ -886,20 +872,21 @@ void Node::BroadcastBlock(const Block& block) {
     }
 }
 
-void Node::RunMinerLoop() {
+void Node::RunMinerLoop(std::stop_token stoken) {
     std::cout << "[miner] Background mining thread started (reward → " << minerAddress << ")"
               << std::endl;
 
-    while (running) {
+    // when stop is requested, we wake the condition variable
+    std::stop_callback wake(stoken, [this] { minerCV.notify_all(); });
+
+    while (!stoken.stop_requested()) {
         {
             std::unique_lock<std::mutex> lock(minerCVMtx);
-            // sleep until a transaction arrives or the node shuts down, and wakes up just in case
-            // every 60 seconds
             minerCV.wait_for(lock, std::chrono::seconds(MINER_CV_TIMEOUT_SECS),
-                             [this] { return !running || mempool.GetCount() > 0; });
+                             [&] { return stoken.stop_requested() || mempool.GetCount() > 0; });
         }
 
-        if (!running) break;
+        if (stoken.stop_requested()) break;
         if (mempool.GetCount() == 0) continue;
 
         try {
@@ -926,11 +913,11 @@ void Node::Start(const std::string& seedAddr) {
     rpcServer.Start();
 
     // start background cleanup of disconnected peers
-    cleanupThread = std::thread([this]() { RunCleanupLoop(); });
+    cleanupThread = std::jthread([this](std::stop_token st) { RunCleanupLoop(st); });
 
     // start background miner if a reward address was configured
     if (!minerAddress.empty()) {
-        minerThread = std::thread([this]() { RunMinerLoop(); });
+        minerThread = std::jthread([this](std::stop_token st) { RunMinerLoop(st); });
         std::cout << "[node] Background miner enabled (reward → " << minerAddress << ")"
                   << std::endl;
     }
@@ -987,17 +974,13 @@ void Node::Start(const std::string& seedAddr) {
 
 void Node::Stop() {
     running = false;
-    minerCV.notify_all();
     server.Stop();
     rpcServer.Stop();
 
-    // join background threads
-    if (cleanupThread.joinable()) {
-        cleanupThread.join();
-    }
-    if (minerThread.joinable()) {
-        minerThread.join();
-    }
+    cleanupThread.request_stop();
+    minerThread.request_stop();
+    cleanupThread.join();
+    minerThread.join();
 
     // copy peers under lock, disconnect and wake all monitor threads
     std::vector<std::shared_ptr<PeerState>> peersSnapshot;

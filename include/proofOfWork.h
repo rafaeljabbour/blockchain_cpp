@@ -3,6 +3,7 @@
 
 #include <openssl/bn.h>
 
+#include <climits>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -10,11 +11,21 @@
 
 class Block;
 
-const int32_t targetBits = 17;
-const int32_t maxNonce = INT32_MAX;
-
 // RAII type alias for BIGNUM
 using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
+
+// the consensus parameters are as follows:
+// hash must have at least 17 leading zeros
+inline constexpr int32_t INITIAL_BITS = 17;
+// retarget every 2016 blocks
+inline constexpr int32_t RETARGET_INTERVAL = 2016;
+// expected time for one retarget period (2016 blocks × 10 min = 2 weeks)
+inline constexpr int64_t TARGET_TIMESPAN = 2016LL * 10 * 60;  // 1 209 600 seconds
+// hard difficulty bounds to prevent runaway adjustments
+inline constexpr int32_t MIN_BITS = 1;    // easiest target
+inline constexpr int32_t MAX_BITS = 255;  // hardest target
+// maximum nonce search space
+inline constexpr int32_t maxNonce = INT32_MAX;
 
 class ProofOfWork {
     private:
