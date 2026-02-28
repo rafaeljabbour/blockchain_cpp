@@ -34,9 +34,14 @@ class Transaction {
         std::vector<uint8_t> Hash() const;
         void Sign(EVP_PKEY* privKey, const std::map<std::string, Transaction>& prevTXs);
         bool Verify(const std::map<std::string, Transaction>& prevTXs) const;
+
+        // fee = sum(input values) - sum(output values)
+        int64_t CalculateFee(const std::map<std::string, Transaction>& prevTXs) const;
+
         Transaction TrimmedCopy() const;
 
-        static Transaction NewCoinbaseTX(const std::string& to, const std::string& data = "");
+        static Transaction NewCoinbaseTX(const std::string& to, int64_t fees = 0,
+                                         const std::string& data = "");
         static Transaction NewUTXOTransaction(const std::string& from, const std::string& to,
                                               int amount, UTXOSet* utxoSet);
 

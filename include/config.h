@@ -5,6 +5,9 @@
 
 inline const std::string DEFAULT_DATA_DIR = "./data";
 
+// minimum fee rate
+inline constexpr double MIN_RELAY_FEE_RATE = 0.001;
+
 namespace Config {
 
 // sets the base data directory

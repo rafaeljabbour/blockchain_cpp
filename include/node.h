@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "blockchain.h"
+#include "config.h"
 #include "mempool.h"
 #include "peer.h"
 #include "rpcServer.h"

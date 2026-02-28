@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,9 +59,11 @@ class Blockchain {
 
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
         void SignTransaction(Transaction* tx, Wallet* wallet);
-        bool VerifyTransaction(const Transaction* tx);
-        bool VerifyTransaction(const Transaction* tx,
-                               const std::map<std::string, Transaction>& blockCtx);
+
+        // returns the transaction fee on success or it will give nullopt if invalid
+        std::optional<int64_t> VerifyTransaction(const Transaction* tx);
+        std::optional<int64_t> VerifyTransaction(
+            const Transaction* tx, const std::map<std::string, Transaction>& blockCtx);
 
         BlockchainIterator Iterator() const;
 

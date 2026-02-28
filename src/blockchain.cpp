@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 #include "blockchainIterator.h"
@@ -85,7 +86,7 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     // RAII wrap
     std::unique_ptr<leveldb::DB> tempDb(rawDb);
 
-    Transaction cbtx = Transaction::NewCoinbaseTX(address, GENESIS_COINBASE_DATA);
+    Transaction cbtx = Transaction::NewCoinbaseTX(address, 0, GENESIS_COINBASE_DATA);
     Block genesis = Block::NewGenesisBlock(cbtx);
 
     std::vector<uint8_t> genesisHash = genesis.GetHash();
@@ -333,14 +334,10 @@ void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
     tx->Sign(wallet->privateKey.get(), prevTXs);
 }
 
-bool Blockchain::VerifyTransaction(const Transaction* tx) {
-    if (tx->IsCoinbase()) {
-        return true;
-    }
+std::optional<int64_t> Blockchain::VerifyTransaction(const Transaction* tx) {
+    if (tx->IsCoinbase()) return 0;
 
-    if (tx->GetVin().empty() || tx->GetVout().empty()) {
-        return false;
-    }
+    if (tx->GetVin().empty() || tx->GetVout().empty()) return std::nullopt;
 
     std::map<std::string, Transaction> prevTXs;
     // collect all previous transactions being spent, the inputs this output is spending
@@ -349,18 +346,19 @@ bool Blockchain::VerifyTransaction(const Transaction* tx) {
         prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
-    return tx->Verify(prevTXs);
+    // compute fee without a second DB lookup
+    int64_t fee = tx->CalculateFee(prevTXs);
+    if (fee < 0) return std::nullopt;
+
+    if (!tx->Verify(prevTXs)) return std::nullopt;
+    return fee;
 }
 
-bool Blockchain::VerifyTransaction(const Transaction* tx,
-                                   const std::map<std::string, Transaction>& blockCtx) {
-    if (tx->IsCoinbase()) {
-        return true;
-    }
+std::optional<int64_t> Blockchain::VerifyTransaction(
+    const Transaction* tx, const std::map<std::string, Transaction>& blockCtx) {
+    if (tx->IsCoinbase()) return 0;
 
-    if (tx->GetVin().empty() || tx->GetVout().empty()) {
-        return false;
-    }
+    if (tx->GetVin().empty() || tx->GetVout().empty()) return std::nullopt;
 
     std::map<std::string, Transaction> prevTXs;
 
@@ -378,7 +376,11 @@ bool Blockchain::VerifyTransaction(const Transaction* tx,
         }
     }
 
-    return tx->Verify(prevTXs);
+    int64_t fee = tx->CalculateFee(prevTXs);
+    if (fee < 0) return std::nullopt;
+
+    if (!tx->Verify(prevTXs)) return std::nullopt;
+    return fee;
 }
 
 BlockchainIterator Blockchain::Iterator() const { return BlockchainIterator(tip, db.get()); }

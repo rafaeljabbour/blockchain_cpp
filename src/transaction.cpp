@@ -181,7 +181,25 @@ Transaction Transaction::TrimmedCopy() const {
     return Transaction(id, inputs, outputs);
 }
 
-Transaction Transaction::NewCoinbaseTX(const std::string& to, const std::string& data) {
+int64_t Transaction::CalculateFee(const std::map<std::string, Transaction>& prevTXs) const {
+    if (IsCoinbase()) return 0;
+
+    int64_t inputSum = 0;
+    for (const auto& input : vin) {
+        const auto& prevTx = prevTXs.at(ByteArrayToHexString(input.GetTxid()));
+        inputSum += prevTx.GetVout()[input.GetVout()].GetValue();
+    }
+
+    int64_t outputSum = 0;
+    for (const auto& output : vout) {
+        outputSum += output.GetValue();
+    }
+
+    return inputSum - outputSum;
+}
+
+Transaction Transaction::NewCoinbaseTX(const std::string& to, int64_t fees,
+                                       const std::string& data) {
     std::string coinbaseData = data;
     if (coinbaseData.empty()) {
         // random data for uniqueness and privacy
@@ -199,7 +217,7 @@ Transaction Transaction::NewCoinbaseTX(const std::string& to, const std::string&
     }
 
     TransactionInput txin({}, -1, {}, StringToBytes(coinbaseData));
-    TransactionOutput txout = NewTXOutput(SUBSIDY, to);
+    TransactionOutput txout = NewTXOutput(SUBSIDY + static_cast<int>(fees), to);
 
     Transaction tx({}, {txin}, {txout});
     tx.id = tx.Hash();

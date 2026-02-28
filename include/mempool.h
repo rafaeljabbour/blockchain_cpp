@@ -10,18 +10,26 @@
 #include "block.h"
 #include "transaction.h"
 
+struct MempoolEntry {
+        Transaction tx;
+        double feeRate;  // raffys per serialized byte
+};
+
 // stores unconfirmed transactions.
 class Mempool {
     private:
-        // the txid in hex gives us the transaction
-        std::map<std::string, Transaction> transactions;
+        std::map<std::string, MempoolEntry> entries;
         mutable std::mutex mtx;
 
     public:
         Mempool() = default;
 
-        void AddTransaction(const Transaction& tx);
+        void AddTransaction(const Transaction& tx, double feeRate);
         void RemoveBlockTransactions(const Block& block);
+
+        // it'll be ordered by descending fee rate for miner selection
+        std::vector<Transaction> GetTransactionsSortedByFeeRate() const;
+
         std::map<std::string, Transaction> GetTransactions() const;
         std::vector<std::string> GetTransactionIDs() const;
         std::optional<Transaction> FindTransaction(const std::string& txid) const;

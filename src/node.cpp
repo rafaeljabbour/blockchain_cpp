@@ -6,6 +6,7 @@
 
 #include "blockchain.h"
 #include "blockchainIterator.h"
+#include "config.h"
 #include "merkleTree.h"
 #include "message.h"
 #include "messageGetBlocks.h"
@@ -100,11 +101,18 @@ void Node::RegisterRPCMethods() {
         if (!Wallet::ValidateAddress(to)) throw std::runtime_error("Invalid 'to' address");
 
         Transaction tx;
+        double feeRate = 0.0;
         {
             std::lock_guard<std::mutex> lock(blockchainMutex);
             if (!blockchain) throw std::runtime_error("No blockchain available");
             UTXOSet utxoSet(blockchain.get());
             tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
+
+            auto fee = blockchain->VerifyTransaction(&tx);
+            if (!fee) throw std::runtime_error("Transaction failed verification after signing");
+
+            size_t txSize = tx.Serialize().size();
+            feeRate = txSize > 0 ? static_cast<double>(*fee) / static_cast<double>(txSize) : 0.0;
         }
 
         std::string txid = ByteArrayToHexString(tx.GetID());
@@ -113,7 +121,7 @@ void Node::RegisterRPCMethods() {
             return json{{"txid", txid}, {"status", "already in mempool"}};
         }
 
-        mempool.AddTransaction(tx);
+        mempool.AddTransaction(tx, feeRate);
         minerCV.notify_one();
         RelayTransaction(tx, "");
 
@@ -458,13 +466,14 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             return;
         }
 
-        // cheap structural check before touching the blockchain
+        // network validation: cheap structural check before touching the blockchain
         if (!VerifyTransaction(tx)) {
             std::cerr << "[node] Rejected malformed transaction " << txid << std::endl;
             return;
         }
 
-        // full signature and structural verification against previous outputs
+        // consensus validation: full signature and structural verification against previous outputs
+        double feeRate = 0.0;
         if (!tx.IsCoinbase()) {
             std::lock_guard<std::mutex> lock(blockchainMutex);
             if (!blockchain) {
@@ -473,11 +482,15 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
                 return;
             }
             try {
-                if (!blockchain->VerifyTransaction(&tx)) {
+                auto fee = blockchain->VerifyTransaction(&tx);
+                if (!fee) {
                     std::cerr << "[node] Rejected transaction " << txid << ": invalid signature"
                               << std::endl;
                     return;
                 }
+                size_t txSize = tx.Serialize().size();
+                feeRate =
+                    txSize > 0 ? static_cast<double>(*fee) / static_cast<double>(txSize) : 0.0;
             } catch (const std::exception& e) {
                 std::cerr << "[node] Rejected transaction " << txid << ": " << e.what()
                           << std::endl;
@@ -485,10 +498,16 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             }
         }
 
-        mempool.AddTransaction(tx);
+        if (feeRate < MIN_RELAY_FEE_RATE) {
+            std::cerr << "[node] Rejected transaction " << txid << ": fee rate " << feeRate
+                      << " < minimum " << MIN_RELAY_FEE_RATE << std::endl;
+            return;
+        }
+
+        mempool.AddTransaction(tx, feeRate);
         minerCV.notify_one();
 
-        // flood the inv to all other peers
+        // flood the inventory to all other peers
         RelayTransaction(tx, peerState.peer->GetRemoteAddress());
     } catch (const std::exception& e) {
         std::cerr << "[node] Failed to deserialize tx from " << peerState.peer->GetRemoteAddress()
@@ -537,7 +556,31 @@ void Node::BroadcastTransaction(const Transaction& tx) {
     }
 
     if (!mempool.Contains(txid)) {
-        mempool.AddTransaction(tx);
+        double feeRate = 0.0;
+        if (!tx.IsCoinbase()) {
+            if (!blockchain) {
+                std::cerr << "[node] BroadcastTransaction: no blockchain available" << std::endl;
+                return;
+            }
+            // serialize outside the lock
+            size_t txSize = tx.Serialize().size();
+            try {
+                std::lock_guard<std::mutex> lock(blockchainMutex);
+                auto fee = blockchain->VerifyTransaction(&tx);
+                if (!fee) {
+                    std::cerr << "[node] BroadcastTransaction: tx " << txid
+                              << " failed verification" << std::endl;
+                    return;
+                }
+                feeRate =
+                    txSize > 0 ? static_cast<double>(*fee) / static_cast<double>(txSize) : 0.0;
+            } catch (const std::exception& e) {
+                std::cerr << "[node] BroadcastTransaction: verification error for " << txid << ": "
+                          << e.what() << std::endl;
+                return;
+            }
+        }
+        mempool.AddTransaction(tx, feeRate);
         minerCV.notify_one();
     }
 
@@ -824,10 +867,10 @@ void Node::MineBlock(const std::string& address) {
         throw std::runtime_error("Currently syncing, cannot mine");
     }
 
-    // snapshot the mempool
-    auto mempoolTxs = mempool.GetTransactions();
+    // snapshot mempool sorted by descending fee rate
+    auto sortedTxs = mempool.GetTransactionsSortedByFeeRate();
 
-    // build the transaction list and read the current tip under the lock
+    // build the transaction list and read the current tip
     std::vector<Transaction> txs;
     std::vector<uint8_t> prevHash;
     {
@@ -836,17 +879,24 @@ void Node::MineBlock(const std::string& address) {
 
         prevHash = blockchain->GetTip();
 
-        // coinbase reward goes to the miner's address
-        txs.push_back(Transaction::NewCoinbaseTX(address, ""));
-
-        for (const auto& [txid, tx] : mempoolTxs) {
-            if (blockchain->VerifyTransaction(&tx)) {
+        // select valid mempool transactions and accumulate their fees
+        int64_t totalFees = 0;
+        for (const auto& tx : sortedTxs) {
+            if (auto fee = blockchain->VerifyTransaction(&tx)) {
                 txs.push_back(tx);
+                totalFees += *fee;
             } else {
+                std::string txid = ByteArrayToHexString(tx.GetID());
                 std::cerr << "[miner] Dropping invalid tx " << txid.substr(0, 16) << "..."
                           << std::endl;
             }
         }
+
+        // the coinbase collects the block subsidy and all transaction fees
+        txs.insert(txs.begin(), Transaction::NewCoinbaseTX(address, totalFees));
+
+        std::cout << "[miner] Coinbase: subsidy=" << SUBSIDY << " fees=" << totalFees
+                  << " total=" << (SUBSIDY + totalFees) << std::endl;
     }
 
     // we determine difficulty for the next block
