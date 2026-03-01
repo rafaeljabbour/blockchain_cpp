@@ -27,8 +27,8 @@ class UTXOSet {
         UTXOSet(const UTXOSet&) = delete;
         UTXOSet& operator=(const UTXOSet&) = delete;
 
-        std::pair<int, std::map<std::string, std::vector<int>>> FindSpendableOutputs(
-            const std::vector<uint8_t>& pubKeyHash, int amount) const;
+        std::pair<int64_t, std::map<std::string, std::vector<int>>> FindSpendableOutputs(
+            const std::vector<uint8_t>& pubKeyHash, int64_t amount) const;
 
         std::vector<TransactionOutput> FindUTXO(const std::vector<uint8_t>& pubKeyHash) const;
 

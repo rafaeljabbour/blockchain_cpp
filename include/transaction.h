@@ -3,14 +3,14 @@
 
 #include <openssl/evp.h>
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "config.h"
 #include "transactionInput.h"
 #include "transactionOutput.h"
-
-const int SUBSIDY = 10;
 
 class Blockchain;
 class UTXOSet;
@@ -40,10 +40,10 @@ class Transaction {
 
         Transaction TrimmedCopy() const;
 
-        static Transaction NewCoinbaseTX(const std::string& to, int64_t fees = 0,
+        static Transaction NewCoinbaseTX(const std::string& to, int32_t height, int64_t fees = 0,
                                          const std::string& data = "");
         static Transaction NewUTXOTransaction(const std::string& from, const std::string& to,
-                                              int amount, UTXOSet* utxoSet);
+                                              int64_t amount, UTXOSet* utxoSet);
 
         std::vector<uint8_t> Serialize() const;
         static Transaction Deserialize(const std::vector<uint8_t>& data);

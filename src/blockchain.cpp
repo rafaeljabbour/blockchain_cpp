@@ -86,7 +86,8 @@ std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& addr
     // RAII wrap
     std::unique_ptr<leveldb::DB> tempDb(rawDb);
 
-    Transaction cbtx = Transaction::NewCoinbaseTX(address, 0, GENESIS_COINBASE_DATA);
+    Transaction cbtx = Transaction::NewCoinbaseTX(address, /*height=*/0, /*fees=*/0,
+                                                  Consensus::GENESIS_COINBASE_DATA);
     Block genesis = Block::NewGenesisBlock(cbtx);
 
     std::vector<uint8_t> genesisHash = genesis.GetHash();
@@ -406,19 +407,19 @@ int32_t Blockchain::GetBlockHeight(const std::vector<uint8_t>& hash) const {
 int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
     // during genesis creation path
     if (tip.empty() || tip == std::vector<uint8_t>(32, 0)) {
-        return INITIAL_BITS;
+        return Consensus::INITIAL_BITS;
     }
 
     Block tipBlock = GetBlock(tip);
 
     // after some time we need to adjust the difficulty of the next blocks
-    if (nextBlockHeight % RETARGET_INTERVAL != 0) {
+    if (nextBlockHeight % Consensus::RETARGET_INTERVAL != 0) {
         return tipBlock.GetBits();
     }
 
     // walk back RETARGET_INTERVAL − 1 steps to find the anchor block
     std::vector<uint8_t> anchorHash = tip;
-    for (int32_t i = 0; i < RETARGET_INTERVAL - 1; ++i) {
+    for (int32_t i = 0; i < Consensus::RETARGET_INTERVAL - 1; ++i) {
         Block b = GetBlock(anchorHash);
         anchorHash = b.GetPreviousHash();
         // a redundancy check to ensure no issues
@@ -431,8 +432,8 @@ int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
     int64_t actualTimespan = tipBlock.GetTimestamp() - anchorBlock.GetTimestamp();
 
     // 4x adjustment cap to prevent any extreme changes
-    actualTimespan = std::max(actualTimespan, TARGET_TIMESPAN / 4);
-    actualTimespan = std::min(actualTimespan, TARGET_TIMESPAN * 4);
+    actualTimespan = std::max(actualTimespan, Consensus::TARGET_TIMESPAN / 4);
+    actualTimespan = std::min(actualTimespan, Consensus::TARGET_TIMESPAN * 4);
 
     int32_t oldBits = tipBlock.GetBits();
 
@@ -452,7 +453,7 @@ int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
     BN_lshift(oldTarget.get(), oldTarget.get(), 256 - oldBits);
 
     BN_set_word(bnActual.get(), static_cast<BN_ULONG>(actualTimespan));
-    BN_set_word(bnExpected.get(), static_cast<BN_ULONG>(TARGET_TIMESPAN));
+    BN_set_word(bnExpected.get(), static_cast<BN_ULONG>(Consensus::TARGET_TIMESPAN));
 
     // newTarget = (old target × actual time) / expected time
     BN_mul(newTarget.get(), oldTarget.get(), bnActual.get(), ctx.get());
@@ -460,11 +461,11 @@ int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
 
     // convert BIGNUM back to bits
     int32_t newBits = 257 - static_cast<int32_t>(BN_num_bits(newTarget.get()));
-    newBits = std::max(MIN_BITS, std::min(MAX_BITS, newBits));
+    newBits = std::max(Consensus::MIN_BITS, std::min(Consensus::MAX_BITS, newBits));
 
     std::cout << "[blockchain] Retarget at height " << nextBlockHeight << ": bits " << oldBits
               << " -> " << newBits << "  (actual=" << actualTimespan << "s"
-              << ", expected=" << TARGET_TIMESPAN << "s)" << std::endl;
+              << ", expected=" << Consensus::TARGET_TIMESPAN << "s)" << std::endl;
 
     return newBits;
 }

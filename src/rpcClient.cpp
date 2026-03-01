@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
             } else if (flag == "-to") {
                 params["to"] = argv[i + 1];
             } else if (flag == "-amount") {
-                params["amount"] = std::stoi(argv[i + 1]);
+                params["amount"] = std::stoll(argv[i + 1]);
             } else {
                 std::cerr << "Error: unknown flag '" << flag << "' for sendtx\n";
                 return 1;

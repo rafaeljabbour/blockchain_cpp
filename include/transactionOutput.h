@@ -9,14 +9,14 @@
 
 class TransactionOutput {
     private:
-        int value;
+        int64_t value;
         std::vector<uint8_t> pubKeyHash;
 
     public:
         TransactionOutput() = default;
-        TransactionOutput(int value, const std::vector<uint8_t>& pubKeyHash);
+        TransactionOutput(int64_t value, const std::vector<uint8_t>& pubKeyHash);
 
-        int GetValue() const { return value; }
+        int64_t GetValue() const { return value; }
         const std::vector<uint8_t>& GetPubKeyHash() const { return pubKeyHash; }
 
         void Lock(const std::vector<uint8_t>& address);
@@ -37,6 +37,6 @@ struct TXOutputs {
 };
 
 // factory function to make object creation easier
-TransactionOutput NewTXOutput(int value, const std::string& address);
+TransactionOutput NewTXOutput(int64_t value, const std::string& address);
 
 #endif

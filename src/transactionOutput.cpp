@@ -6,7 +6,7 @@
 #include "serialization.h"
 #include "wallet.h"
 
-TransactionOutput::TransactionOutput(int value, const std::vector<uint8_t>& pubKeyHash)
+TransactionOutput::TransactionOutput(int64_t value, const std::vector<uint8_t>& pubKeyHash)
     : value(value), pubKeyHash(pubKeyHash) {}
 
 void TransactionOutput::Lock(const std::vector<uint8_t>& address) {
@@ -22,8 +22,8 @@ bool TransactionOutput::IsLockedWithKey(const std::vector<uint8_t>& pubKeyHash) 
 std::vector<uint8_t> TransactionOutput::Serialize() const {
     std::vector<uint8_t> result;
 
-    // value (4 bytes)
-    WriteUint32(result, static_cast<uint32_t>(value));
+    // value (8 bytes)
+    WriteUint64(result, static_cast<uint64_t>(value));
 
     // pubKeyHash size (4 bytes)
     WriteUint32(result, static_cast<uint32_t>(pubKeyHash.size()));
@@ -39,9 +39,9 @@ std::pair<TransactionOutput, size_t> TransactionOutput::Deserialize(
     TransactionOutput output;
     size_t startOffset = offset;
 
-    // value (4 bytes)
-    output.value = static_cast<int>(ReadUint32(data, offset));
-    offset += 4;
+    // value (8 bytes)
+    output.value = static_cast<int64_t>(ReadUint64(data, offset));
+    offset += 8;
 
     // pubKeyHash size (4 bytes)
     uint32_t pubKeyHashSize = ReadUint32(data, offset);
@@ -60,7 +60,7 @@ std::pair<TransactionOutput, size_t> TransactionOutput::Deserialize(
 }
 
 // factory function to create a new transaction output
-TransactionOutput NewTXOutput(int value, const std::string& address) {
+TransactionOutput NewTXOutput(int64_t value, const std::string& address) {
     TransactionOutput txo(value, {});
     txo.Lock(StringToBytes(address));
     return txo;

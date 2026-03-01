@@ -12,21 +12,19 @@
 
 #include "block.h"
 #include "blockchainIterator.h"
+#include "config.h"
 #include "transaction.h"
 
 // Forward declaration
 class Wallet;
 class UTXOSet;
 
-inline const std::string GENESIS_COINBASE_DATA =
-    "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
-
 class Blockchain {
         friend class UTXOSet;
 
     private:
-        std::vector<uint8_t> tip;  // hash of the last block
-        int32_t tipHeight{0};      // height of tip, it will becached in memory and persisted to DB
+        std::vector<uint8_t> tip;         // hash of the last block
+        int32_t tipHeight{0};             // height of tip, cached in memory and persisted to DB
         std::unique_ptr<leveldb::DB> db;  // leveldb for storing blocks (persistency)
 
     public:
@@ -60,8 +58,10 @@ class Blockchain {
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
         void SignTransaction(Transaction* tx, Wallet* wallet);
 
-        // returns the transaction fee on success or it will give nullopt if invalid
+        // returns the fee on success, nullopt on failure
         std::optional<int64_t> VerifyTransaction(const Transaction* tx);
+
+        // overload that accepts an intra-block context for topological verification
         std::optional<int64_t> VerifyTransaction(
             const Transaction* tx, const std::map<std::string, Transaction>& blockCtx);
 

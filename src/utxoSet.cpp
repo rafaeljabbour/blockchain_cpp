@@ -16,10 +16,10 @@ UTXOSet::UTXOSet(Blockchain* bc) : blockchain(bc) {
     }
 }
 
-std::pair<int, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOutputs(
-    const std::vector<uint8_t>& pubKeyHash, int amount) const {
+std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOutputs(
+    const std::vector<uint8_t>& pubKeyHash, int64_t amount) const {
     std::map<std::string, std::vector<int>> unspentOutputs;
-    int accumulated = 0;
+    int64_t accumulated = 0;
     bool found = false;
 
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));

@@ -123,7 +123,22 @@ std::vector<uint8_t> Block::HashTransactions() const {
     return tree.GetRootHash();
 }
 
+bool Block::CheckBlockSize(const Block& block, size_t knownSerializedSize) {
+    const auto& txs = block.GetTransactions();
+
+    if (txs.empty() || !txs[0].IsCoinbase()) return false;
+
+    if (txs.size() > Policy::MAX_BLOCK_TXS) return false;
+
+    // if size is known, use it, otherwise serialize the block
+    size_t blockSize = knownSerializedSize > 0 ? knownSerializedSize : block.Serialize().size();
+
+    if (blockSize > Policy::MAX_BLOCK_SIZE) return false;
+
+    return true;
+}
+
 Block Block::NewGenesisBlock(const Transaction& coinbase) {
     std::vector<Transaction> transactions = {coinbase};
-    return Block(transactions, std::vector<uint8_t>(32, 0), INITIAL_BITS);
+    return Block(transactions, std::vector<uint8_t>(32, 0), Consensus::INITIAL_BITS);
 }

@@ -198,7 +198,7 @@ int64_t Transaction::CalculateFee(const std::map<std::string, Transaction>& prev
     return inputSum - outputSum;
 }
 
-Transaction Transaction::NewCoinbaseTX(const std::string& to, int64_t fees,
+Transaction Transaction::NewCoinbaseTX(const std::string& to, int32_t height, int64_t fees,
                                        const std::string& data) {
     std::string coinbaseData = data;
     if (coinbaseData.empty()) {
@@ -217,7 +217,8 @@ Transaction Transaction::NewCoinbaseTX(const std::string& to, int64_t fees,
     }
 
     TransactionInput txin({}, -1, {}, StringToBytes(coinbaseData));
-    TransactionOutput txout = NewTXOutput(SUBSIDY + static_cast<int>(fees), to);
+
+    TransactionOutput txout = NewTXOutput(Consensus::GetBlockSubsidy(height) + fees, to);
 
     Transaction tx({}, {txin}, {txout});
     tx.id = tx.Hash();
@@ -226,7 +227,7 @@ Transaction Transaction::NewCoinbaseTX(const std::string& to, int64_t fees,
 }
 
 Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::string& to,
-                                            int amount, UTXOSet* utxoSet) {
+                                            int64_t amount, UTXOSet* utxoSet) {
     std::vector<TransactionInput> inputs;
     std::vector<TransactionOutput> outputs;
 

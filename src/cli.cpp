@@ -66,7 +66,7 @@ void CLI::getBalance(const std::string& address) {
     std::vector<uint8_t> decoded = Base58DecodeStr(address);
     std::vector<uint8_t> pubKeyHash(decoded.begin() + 1, decoded.end() - ADDRESS_CHECKSUM_LEN);
 
-    int balance = 0;
+    int64_t balance = 0;
     std::vector<TransactionOutput> UTXOs = utxoSet.FindUTXO(pubKeyHash);
 
     for (const TransactionOutput& out : UTXOs) {
@@ -100,7 +100,7 @@ void CLI::listAddresses() {
     }
 }
 
-void CLI::send(const std::string& from, const std::string& to, int amount) {
+void CLI::send(const std::string& from, const std::string& to, int64_t amount) {
     if (!Wallet::ValidateAddress(from)) {
         throw std::runtime_error("Invalid sender address");
     }
@@ -116,7 +116,8 @@ void CLI::send(const std::string& from, const std::string& to, int amount) {
     Transaction tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
 
     // mining reward for the sender
-    Transaction coinbaseTx = Transaction::NewCoinbaseTX(from, "");
+    int32_t nextHeight = bc.GetChainHeight() + 1;
+    Transaction coinbaseTx = Transaction::NewCoinbaseTX(from, nextHeight);
 
     // mine the block with both transactions
     std::vector<Transaction> txs = {coinbaseTx, tx};
@@ -196,7 +197,7 @@ void CLI::run(int argc, char* argv[]) {
         }
 
         std::string from, to;
-        int amount = 0;
+        int64_t amount = 0;
 
         // parse flags
         for (int i = 1; i < cmdArgc; i += 2) {
@@ -212,7 +213,7 @@ void CLI::run(int argc, char* argv[]) {
             } else if (flag == "-to") {
                 to = cmdArgv[i + 1];
             } else if (flag == "-amount") {
-                amount = std::stoi(cmdArgv[i + 1]);
+                amount = std::stoll(cmdArgv[i + 1]);
             } else {
                 std::cout << "Error: unknown flag " << flag << "\n";
                 printUsage();

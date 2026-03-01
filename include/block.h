@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "config.h"
 #include "transaction.h"
 
 class Block {
@@ -29,6 +30,8 @@ class Block {
         int32_t GetBits() const { return bits; }
 
         static Block NewGenesisBlock(const Transaction& coinbase);
+
+        static bool CheckBlockSize(const Block& block, size_t knownSerializedSize = 0);
 
         std::vector<uint8_t> Serialize() const;
         static Block Deserialize(const std::vector<uint8_t>& serialized);

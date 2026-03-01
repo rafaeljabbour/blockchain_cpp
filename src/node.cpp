@@ -91,7 +91,7 @@ void Node::RegisterRPCMethods() {
     rpcServer.RegisterMethod("sendtx", [this](const json& params) -> json {
         std::string from = params.value("from", "");
         std::string to = params.value("to", "");
-        int amount = params.value("amount", 0);
+        int64_t amount = params.value("amount", static_cast<int64_t>(0));
 
         if (from.empty()) throw std::runtime_error("Missing 'from' parameter");
         if (to.empty()) throw std::runtime_error("Missing 'to' parameter");
@@ -498,9 +498,9 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             }
         }
 
-        if (feeRate < MIN_RELAY_FEE_RATE) {
+        if (feeRate < Policy::MIN_RELAY_FEE_RATE) {
             std::cerr << "[node] Rejected transaction " << txid << ": fee rate " << feeRate
-                      << " < minimum " << MIN_RELAY_FEE_RATE << std::endl;
+                      << " < minimum " << Policy::MIN_RELAY_FEE_RATE << std::endl;
             return;
         }
 
@@ -603,6 +603,13 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             return;
         }
 
+        // check block size and structure
+        if (!Block::CheckBlockSize(block, payload.size())) {
+            std::cerr << "[node] Rejected block " << blockHash << ": failed size/structure check"
+                      << std::endl;
+            return;
+        }
+
         // persist block and check sync status under one lock
         {
             std::lock_guard<std::mutex> lock(blockchainMutex);
@@ -611,7 +618,10 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                 return;
             }
 
+            int32_t nextHeight = blockchain->GetChainHeight() + 1;
+
             // full verification with topological ordering
+            int64_t totalFees = 0;
             std::map<std::string, Transaction> blockCtx;
             for (const auto& tx : block.GetTransactions()) {
                 if (tx.IsCoinbase()) {
@@ -619,18 +629,32 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                     continue;
                 }
                 try {
-                    if (!blockchain->VerifyTransaction(&tx, blockCtx)) {
+                    auto fee = blockchain->VerifyTransaction(&tx, blockCtx);
+                    if (!fee) {
                         std::cerr << "[node] Rejected block " << blockHash
                                   << ": invalid signature in tx "
                                   << ByteArrayToHexString(tx.GetID()) << std::endl;
                         return;
                     }
+                    totalFees += *fee;
                 } catch (const std::exception& e) {
                     std::cerr << "[node] Rejected block " << blockHash
                               << ": tx verification failed: " << e.what() << std::endl;
                     return;
                 }
                 blockCtx[ByteArrayToHexString(tx.GetID())] = tx;
+            }
+
+            // validate coinbase reward
+            int64_t maxCoinbase = Consensus::GetBlockSubsidy(nextHeight) + totalFees;
+            int64_t coinbaseValue = 0;
+            for (const auto& out : block.GetTransactions()[0].GetVout()) {
+                coinbaseValue += out.GetValue();
+            }
+            if (coinbaseValue > maxCoinbase) {
+                std::cerr << "[node] Rejected block " << blockHash << ": coinbase value "
+                          << coinbaseValue << " exceeds allowed " << maxCoinbase << std::endl;
+                return;
             }
 
             blockchain->AddBlock(block);
@@ -878,25 +902,42 @@ void Node::MineBlock(const std::string& address) {
         if (!blockchain) throw std::runtime_error("No blockchain available for mining");
 
         prevHash = blockchain->GetTip();
+        int32_t nextHeight = blockchain->GetChainHeight() + 1;
+        int64_t subsidy = Consensus::GetBlockSubsidy(nextHeight);
 
-        // select valid mempool transactions and accumulate their fees
+        // estimate base block size using a placeholder coinbase
+        Transaction placeholderCoinbase = Transaction::NewCoinbaseTX(address, nextHeight);
+        // timestamp(8) + txcount(4) + prevHash(32) + hash(32) + nonce(4) +
+        // the size of the coinbase transaction (4 bytes)
+        uint32_t blockSize = 84 + 4 + static_cast<uint32_t>(placeholderCoinbase.Serialize().size());
+
+        // select valid mempool transactions by fee rate, and stop at the block size limit
         int64_t totalFees = 0;
         for (const auto& tx : sortedTxs) {
+            uint32_t txBytes = 4 + static_cast<uint32_t>(tx.Serialize().size());
+            if (blockSize + txBytes > Policy::MAX_BLOCK_SIZE) {
+                std::cout << "[miner] Block size limit reached, stopping tx selection" << std::endl;
+                break;
+            }
+            if (txs.size() + 1 >= Policy::MAX_BLOCK_TXS) {
+                std::cout << "[miner] Block tx count limit reached" << std::endl;
+                break;
+            }
             if (auto fee = blockchain->VerifyTransaction(&tx)) {
                 txs.push_back(tx);
                 totalFees += *fee;
+                blockSize += txBytes;
             } else {
-                std::string txid = ByteArrayToHexString(tx.GetID());
-                std::cerr << "[miner] Dropping invalid tx " << txid.substr(0, 16) << "..."
-                          << std::endl;
+                std::cerr << "[miner] Dropping invalid tx "
+                          << ByteArrayToHexString(tx.GetID()).substr(0, 16) << "..." << std::endl;
             }
         }
 
-        // the coinbase collects the block subsidy and all transaction fees
-        txs.insert(txs.begin(), Transaction::NewCoinbaseTX(address, totalFees));
+        // coinbase collects the halved subsidy plus all collected fees
+        txs.insert(txs.begin(), Transaction::NewCoinbaseTX(address, nextHeight, totalFees));
 
-        std::cout << "[miner] Coinbase: subsidy=" << SUBSIDY << " fees=" << totalFees
-                  << " total=" << (SUBSIDY + totalFees) << std::endl;
+        std::cout << "[miner] height=" << nextHeight << " subsidy=" << subsidy
+                  << " fees=" << totalFees << " reward=" << (subsidy + totalFees) << std::endl;
     }
 
     // we determine difficulty for the next block
