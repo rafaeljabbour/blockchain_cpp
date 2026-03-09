@@ -21,6 +21,9 @@ namespace Consensus {
         return SUBSIDY >> halvings;
     }
 
+    // coinbase outputs cannot be spent until buried under this many blocks
+    inline constexpr int32_t COINBASE_MATURITY = 100;
+
     // proof-of-work
     inline constexpr int32_t INITIAL_BITS = 17;
     inline constexpr int32_t RETARGET_INTERVAL = 2016;

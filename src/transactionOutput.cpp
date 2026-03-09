@@ -69,6 +69,12 @@ TransactionOutput NewTXOutput(int64_t value, const std::string& address) {
 std::vector<uint8_t> TXOutputs::Serialize() const {
     std::vector<uint8_t> result;
 
+    // coinbase flag (1 byte)
+    result.push_back(isCoinbase ? 0x01 : 0x00);
+
+    // block height this transaction was confirmed at (4 bytes)
+    WriteUint32(result, static_cast<uint32_t>(blockHeight));
+
     // number of outputs (4 bytes)
     WriteUint32(result, static_cast<uint32_t>(outputs.size()));
 
@@ -88,9 +94,18 @@ TXOutputs TXOutputs::Deserialize(const std::vector<uint8_t>& data) {
     TXOutputs txOutputs;
     size_t offset = 0;
 
-    if (data.size() < 4) {
+    // isCoinbase(1) + blockHeight(4) + outputCount(4) = 9
+    if (data.size() < 9) {
         throw std::runtime_error("TXOutputs data too small to deserialize");
     }
+
+    // coinbase flag (1 byte)
+    txOutputs.isCoinbase = (data[offset] == 0x01);
+    offset += 1;
+
+    // block height (4 bytes)
+    txOutputs.blockHeight = static_cast<int32_t>(ReadUint32(data, offset));
+    offset += 4;
 
     // number of outputs (4 bytes)
     uint32_t outputCount = ReadUint32(data, offset);
@@ -99,6 +114,9 @@ TXOutputs TXOutputs::Deserialize(const std::vector<uint8_t>& data) {
     // each (original index, output) pair
     for (uint32_t i = 0; i < outputCount; i++) {
         // original output index (4 bytes)
+        if (offset + 4 > data.size()) {
+            throw std::runtime_error("TXOutputs data truncated at output index");
+        }
         int origIdx = static_cast<int>(ReadUint32(data, offset));
         offset += 4;
 

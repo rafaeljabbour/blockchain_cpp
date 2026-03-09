@@ -31,6 +31,8 @@ class TransactionOutput {
 // struct to store multiple outputs keyed by their original transaction output index
 struct TXOutputs {
         std::map<int, TransactionOutput> outputs;
+        bool isCoinbase{false};
+        int32_t blockHeight{0};
 
         std::vector<uint8_t> Serialize() const;
         static TXOutputs Deserialize(const std::vector<uint8_t>& data);

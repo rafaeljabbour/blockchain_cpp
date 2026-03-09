@@ -267,6 +267,7 @@ std::map<std::string, TXOutputs> Blockchain::FindUTXO() {
 
     while (bci.hasNext()) {
         Block block = bci.Next();
+        int32_t height = GetBlockHeight(block.GetHash());
 
         for (const Transaction& tx : block.GetTransactions()) {
             std::string txID = ByteArrayToHexString(tx.GetID());
@@ -291,6 +292,10 @@ std::map<std::string, TXOutputs> Blockchain::FindUTXO() {
             }
 
             if (!outs.outputs.empty()) {
+                // this is for the maturity enforcement
+                outs.isCoinbase = tx.IsCoinbase();
+                outs.blockHeight = height;
+
                 UTXO[txID] = outs;
             }
 
@@ -323,6 +328,24 @@ Transaction Blockchain::FindTransaction(const std::vector<uint8_t>& ID) {
     throw std::runtime_error("Transaction not found");
 }
 
+std::pair<Transaction, int32_t> Blockchain::FindTransactionWithHeight(
+    const std::vector<uint8_t>& ID) {
+    BlockchainIterator bci = Iterator();
+
+    while (bci.hasNext()) {
+        Block block = bci.Next();
+
+        for (const Transaction& tx : block.GetTransactions()) {
+            if (tx.GetID() == ID) {
+                int32_t height = GetBlockHeight(block.GetHash());
+                return {tx, height};
+            }
+        }
+    }
+
+    throw std::runtime_error("Transaction not found");
+}
+
 void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
     std::map<std::string, Transaction> prevTXs;
 
@@ -341,9 +364,20 @@ std::optional<int64_t> Blockchain::VerifyTransaction(const Transaction* tx) {
     if (tx->GetVin().empty() || tx->GetVout().empty()) return std::nullopt;
 
     std::map<std::string, Transaction> prevTXs;
+    int32_t currentHeight = GetChainHeight();
+
     // collect all previous transactions being spent, the inputs this output is spending
     for (const auto& vin : tx->GetVin()) {
-        Transaction prevTX = FindTransaction(vin.GetTxid());
+        auto [prevTX, prevHeight] = FindTransactionWithHeight(vin.GetTxid());
+
+        // can't spend unless coinbase is mature
+        if (prevTX.IsCoinbase()) {
+            int32_t depth = currentHeight - prevHeight;
+            if (depth < Consensus::COINBASE_MATURITY) {
+                return std::nullopt;
+            }
+        }
+
         prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
@@ -363,6 +397,8 @@ std::optional<int64_t> Blockchain::VerifyTransaction(
 
     std::map<std::string, Transaction> prevTXs;
 
+    int32_t spendHeight = GetChainHeight() + 1;
+
     // collect all previous transactions being spent, the inputs this output is spending
     for (const auto& vin : tx->GetVin()) {
         std::string txidHex = ByteArrayToHexString(vin.GetTxid());
@@ -370,9 +406,21 @@ std::optional<int64_t> Blockchain::VerifyTransaction(
         // check for intra block spending first
         auto ctxIt = blockCtx.find(txidHex);
         if (ctxIt != blockCtx.end()) {
+            if (ctxIt->second.IsCoinbase()) {
+                return std::nullopt;
+            }
             prevTXs.insert({txidHex, ctxIt->second});
         } else {
-            Transaction prevTX = FindTransaction(vin.GetTxid());
+            auto [prevTX, prevHeight] = FindTransactionWithHeight(vin.GetTxid());
+
+            // can't spend unless coinbase is mature
+            if (prevTX.IsCoinbase()) {
+                int32_t depth = spendHeight - prevHeight;
+                if (depth < Consensus::COINBASE_MATURITY) {
+                    return std::nullopt;
+                }
+            }
+
             prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
         }
     }

@@ -56,6 +56,10 @@ class Blockchain {
         std::map<std::string, TXOutputs> FindUTXO();
 
         Transaction FindTransaction(const std::vector<uint8_t>& ID);
+
+        // returns the transaction and the height of the block it was confirmed in
+        std::pair<Transaction, int32_t> FindTransactionWithHeight(const std::vector<uint8_t>& ID);
+
         void SignTransaction(Transaction* tx, Wallet* wallet);
 
         // returns the fee on success, nullopt on failure

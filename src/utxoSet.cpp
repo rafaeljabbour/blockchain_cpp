@@ -22,6 +22,8 @@ std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendab
     int64_t accumulated = 0;
     bool found = false;
 
+    int32_t currentHeight = blockchain->GetChainHeight();
+
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
 
     for (it->SeekToFirst(); it->Valid() && !found; it->Next()) {
@@ -37,6 +39,14 @@ std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendab
 
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
+
+        // can't spend unless coinbase is mature
+        if (outs.isCoinbase) {
+            int32_t depth = currentHeight - outs.blockHeight;
+            if (depth < Consensus::COINBASE_MATURITY) {
+                continue;
+            }
+        }
 
         for (const auto& [origIdx, out] : outs.outputs) {
             if (out.IsLockedWithKey(pubKeyHash) && accumulated < amount) {
@@ -61,6 +71,8 @@ std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendab
 std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pubKeyHash) const {
     std::vector<TransactionOutput> UTXOs;
 
+    int32_t currentHeight = blockchain->GetChainHeight();
+
     std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
 
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
@@ -74,6 +86,14 @@ std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pub
 
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
+
+        // skip immature coinbase outputs
+        if (outs.isCoinbase) {
+            int32_t depth = currentHeight - outs.blockHeight;
+            if (depth < Consensus::COINBASE_MATURITY) {
+                continue;
+            }
+        }
 
         for (const auto& [origIdx, out] : outs.outputs) {
             if (out.IsLockedWithKey(pubKeyHash)) {
@@ -167,6 +187,9 @@ void UTXOSet::Update(const Block& block) {
     leveldb::DB* db = blockchain->db.get();
     leveldb::WriteBatch batch;
 
+    // the tip height reflects this block as it's added after the block is added
+    int32_t blockHeight = blockchain->GetChainHeight();
+
     for (const Transaction& tx : block.GetTransactions()) {
         if (!tx.IsCoinbase()) {
             for (const TransactionInput& vin : tx.GetVin()) {
@@ -191,7 +214,7 @@ void UTXOSet::Update(const Block& block) {
                     if (outs.outputs.empty()) {
                         batch.Delete(ByteArrayToSlice(key));
                     } else {
-                        // else we update with the remaining outputs
+                        // else we update with the remaining outputs and preserve the metadata
                         std::vector<uint8_t> serialized = outs.Serialize();
                         batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
                     }
@@ -201,8 +224,11 @@ void UTXOSet::Update(const Block& block) {
             }
         }
 
-        // add the new outputs from this transaction with original indices
+        // add the new outputs from this transaction with original indices and metadata
         TXOutputs newOutputs;
+        newOutputs.isCoinbase = tx.IsCoinbase();
+        newOutputs.blockHeight = blockHeight;
+
         const auto& vout = tx.GetVout();
         for (size_t i = 0; i < vout.size(); i++) {
             newOutputs.outputs[static_cast<int>(i)] = vout[i];
