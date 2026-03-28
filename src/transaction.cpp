@@ -51,7 +51,13 @@ void Transaction::Sign(EVP_PKEY* privKey, const std::map<std::string, Transactio
         const Transaction& prevTx = prevTXs.at(txID);
 
         txCopy.vin[inID].signature = {};
-        txCopy.vin[inID].pubKey = prevTx.vout[txCopy.vin[inID].GetVout()].GetPubKeyHash();
+
+        int voutIdx = txCopy.vin[inID].GetVout();
+        if (voutIdx < 0 || voutIdx >= static_cast<int>(prevTx.vout.size())) {
+            throw std::runtime_error("Sign: input references invalid output index " +
+                                     std::to_string(voutIdx));
+        }
+        txCopy.vin[inID].pubKey = prevTx.vout[voutIdx].GetPubKeyHash();
         txCopy.id = txCopy.Hash();
         txCopy.vin[inID].pubKey = {};
 
@@ -107,8 +113,13 @@ bool Transaction::Verify(const std::map<std::string, Transaction>& prevTXs) cons
         const Transaction& prevTx = prevTXs.at(txID);
 
         txCopy.vin[inID].signature = {};
-        // sign it, save it, then revert
-        txCopy.vin[inID].pubKey = prevTx.vout[txCopy.vin[inID].GetVout()].GetPubKeyHash();
+
+        int voutIdx = txCopy.vin[inID].GetVout();
+        if (voutIdx < 0 || voutIdx >= static_cast<int>(prevTx.vout.size())) {
+            throw std::runtime_error("Verify: input references invalid output index " +
+                                     std::to_string(voutIdx));
+        }
+        txCopy.vin[inID].pubKey = prevTx.vout[voutIdx].GetPubKeyHash();
         txCopy.id = txCopy.Hash();
         txCopy.vin[inID].pubKey = {};
 
@@ -187,7 +198,12 @@ int64_t Transaction::CalculateFee(const std::map<std::string, Transaction>& prev
     int64_t inputSum = 0;
     for (const auto& input : vin) {
         const auto& prevTx = prevTXs.at(ByteArrayToHexString(input.GetTxid()));
-        inputSum += prevTx.GetVout()[input.GetVout()].GetValue();
+        int voutIdx = input.GetVout();
+        if (voutIdx < 0 || voutIdx >= static_cast<int>(prevTx.GetVout().size())) {
+            throw std::runtime_error("CalculateFee: input references invalid output index " +
+                                     std::to_string(voutIdx));
+        }
+        inputSum += prevTx.GetVout()[voutIdx].GetValue();
     }
 
     int64_t outputSum = 0;

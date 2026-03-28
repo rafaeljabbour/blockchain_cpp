@@ -10,15 +10,23 @@
 #include <thread>
 #include <vector>
 
+#include "addrManager.h"
 #include "blockchain.h"
 #include "config.h"
 #include "mempool.h"
+#include "netAddr.h"
 #include "peer.h"
 #include "rpcServer.h"
 #include "server.h"
 
 // maximum number of simultaneous peer connections
 inline constexpr size_t MAX_PEERS = 125;
+
+// target number of outbound connections the node actively maintains.
+inline constexpr size_t TARGET_OUTBOUND_PEERS = 8;
+
+// interval between outbound connection attempts when below target (seconds)
+inline constexpr int OUTBOUND_INTERVAL_SECS = 30;
 
 // liveliness monitoring constants
 inline constexpr int PING_INTERVAL_SECS = 120;
@@ -33,10 +41,12 @@ struct PeerState {
         bool versionSent = false;      // have we sent our version to this peer?
         bool versionReceived = false;  // have we received their version?
         bool handshakeComplete = false;
+        bool isOutbound = false;      // did we initiate this connection?
         int32_t remoteHeight = -1;    // their blockchain height
         uint64_t services = 0;        // services they advertise
         std::string userAgent;        // their software name/version
         int32_t protocolVersion = 0;  // their protocol version
+        NetAddr listenAddr;           // their self-advertised listening address
 
         // liveliness monitoring
         std::mutex pongMutex;
@@ -61,6 +71,7 @@ class Node {
 
         Mempool mempool;
         RPCServer rpcServer;
+        AddrManager addrManager;
 
         // persistent blockchain handling
         std::unique_ptr<Blockchain> blockchain;
@@ -87,10 +98,15 @@ class Node {
         void HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleGetBlocks(PeerState& peerState, const std::vector<uint8_t>& payload);
         void HandleGetData(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleAddr(PeerState& peerState, const std::vector<uint8_t>& payload);
+        void HandleGetAddr(PeerState& peerState);
 
         void SendVersion(PeerState& peerState);
 
         void RelayTransaction(const Transaction& tx, const std::string& sourcePeerAddr);
+
+        // relay a peer's address to a small number of other connected peers
+        void GossipAddr(const NetAddr& addr, const std::string& sourcePeerAddr);
 
         void MonitorPeer(std::shared_ptr<PeerState> peerState);
 
@@ -102,6 +118,15 @@ class Node {
         std::condition_variable cleanupCV;
         void RunCleanupLoop(std::stop_token stoken);
         std::jthread cleanupThread;
+
+        // outbound connection management
+        std::mutex outboundCVMtx;
+        std::condition_variable outboundCV;
+        void RunOutboundLoop(std::stop_token stoken);
+        std::jthread outboundThread;
+
+        size_t CountOutboundPeers();
+        std::vector<std::string> GetConnectedPeerAddrs();
 
         // mining
         std::string minerAddress;

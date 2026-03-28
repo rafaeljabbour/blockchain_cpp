@@ -181,6 +181,14 @@ void Blockchain::AddBlock(const Block& block) {
         throw std::runtime_error("Block's previous hash does not match current tip");
     }
 
+    // verify the block's difficulty matches what our chain requires
+    int32_t expectedBits = GetNextWorkRequired(tipHeight + 1);
+    if (block.GetBits() != expectedBits) {
+        throw std::runtime_error("Block difficulty mismatch: expected bits=" +
+                                 std::to_string(expectedBits) +
+                                 ", got bits=" + std::to_string(block.GetBits()));
+    }
+
     std::vector<uint8_t> blockHash = block.GetHash();
 
     // check if we already have this block
@@ -508,7 +516,7 @@ int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {
     BN_div(newTarget.get(), nullptr, newTarget.get(), bnExpected.get(), ctx.get());
 
     // convert BIGNUM back to bits
-    int32_t newBits = 257 - static_cast<int32_t>(BN_num_bits(newTarget.get()));
+    int32_t newBits = 256 - static_cast<int32_t>(BN_num_bits(newTarget.get()));
     newBits = std::max(Consensus::MIN_BITS, std::min(Consensus::MAX_BITS, newBits));
 
     std::cout << "[blockchain] Retarget at height " << nextBlockHeight << ": bits " << oldBits

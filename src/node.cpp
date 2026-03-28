@@ -2,13 +2,16 @@
 
 #include <chrono>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 
+#include "addrManager.h"
 #include "blockchain.h"
 #include "blockchainIterator.h"
 #include "config.h"
 #include "merkleTree.h"
 #include "message.h"
+#include "messageAddr.h"
 #include "messageGetBlocks.h"
 #include "messageInv.h"
 #include "messagePing.h"
@@ -46,8 +49,9 @@ Node::Node(const std::string& ip, uint16_t port, uint16_t rpcPort, const std::st
 Node::~Node() { Stop(); }
 
 bool Node::VerifyTransaction(const Transaction& tx) {
+    // coinbase transactions are created by consensus only
     if (tx.IsCoinbase()) {
-        return true;
+        return false;
     }
 
     // at least one input
@@ -193,6 +197,49 @@ void Node::RegisterRPCMethods() {
 
         return json{{"hash", tipHash}, {"height", blockchainHeight.load()}};
     });
+
+    rpcServer.RegisterMethod("getpeerinfo", [this](const json&) -> json {
+        json result;
+
+        size_t inbound = 0;
+        size_t outbound = 0;
+        json peersArray = json::array();
+
+        {
+            std::lock_guard<std::mutex> lock(peersMutex);
+            for (const auto& peerState : peers) {
+                bool connected = peerState->peer->IsConnected();
+
+                if (connected) {
+                    if (peerState->isOutbound) {
+                        outbound++;
+                    } else {
+                        inbound++;
+                    }
+                }
+
+                json peerInfo;
+                peerInfo["addr"] = peerState->peer->GetRemoteAddress();
+                peerInfo["connected"] = connected;
+                peerInfo["inbound"] = !peerState->isOutbound;
+                peerInfo["handshake"] = peerState->handshakeComplete;
+                peerInfo["height"] = peerState->remoteHeight;
+                peerInfo["version"] = peerState->protocolVersion;
+                peerInfo["useragent"] = peerState->userAgent;
+                peerInfo["services"] = peerState->services;
+
+                peersArray.push_back(std::move(peerInfo));
+            }
+        }
+
+        result["total"] = inbound + outbound;
+        result["inbound"] = inbound;
+        result["outbound"] = outbound;
+        result["address_book_size"] = addrManager.Size();
+        result["peers"] = std::move(peersArray);
+
+        return result;
+    });
 }
 
 void Node::SendVersion(PeerState& peerState) {
@@ -215,6 +262,7 @@ void Node::HandleVersion(PeerState& peerState, const std::vector<uint8_t>& paylo
     peerState.services = remoteVersion.GetServices();
     peerState.userAgent = remoteVersion.GetUserAgent();
     peerState.protocolVersion = remoteVersion.GetVersion();
+    peerState.listenAddr = remoteVersion.GetAddrFrom();
 
     std::cout << "[node] Received version from " << peerState.peer->GetRemoteAddress()
               << " (height=" << remoteVersion.GetStartHeight()
@@ -271,6 +319,26 @@ void Node::HandleVerack(PeerState& peerState) {
     peerState.handshakeComplete = true;
     std::cout << "[node] Handshake complete with " << peerState.peer->GetRemoteAddress()
               << std::endl;
+
+    // we ask the peer for addresses it knows about
+    try {
+        peerState.peer->SendMessage(CreateGetAddrMessage());
+        std::cout << "[node] Sent getaddr to " << peerState.peer->GetRemoteAddress() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to send getaddr to " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+
+    // we add the peer's listening address to our address book and gossip it
+    NetAddr peerAddr = peerState.listenAddr;
+    peerAddr.time = static_cast<uint32_t>(std::time(nullptr));
+
+    // only add if the peer advertised a valid listening port
+    // note: it's also checked in the addrmanager
+    if (peerAddr.port != 0) {
+        addrManager.Add(peerAddr);
+        GossipAddr(peerAddr, peerState.peer->GetRemoteAddress());
+    }
 }
 
 void Node::HandlePing(PeerState& peerState, const std::vector<uint8_t>& payload) {
@@ -708,6 +776,10 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
         HandleTx(peerState, msg.GetPayload());
     } else if (cmd == CMD_BLOCK) {
         HandleBlock(peerState, msg.GetPayload());
+    } else if (cmd == CMD_ADDR) {
+        HandleAddr(peerState, msg.GetPayload());
+    } else if (cmd == CMD_GETADDR) {
+        HandleGetAddr(peerState);
     } else {
         std::cout << "[node] Unknown command '" << cmd << "' from "
                   << peerState.peer->GetRemoteAddress() << std::endl;
@@ -868,6 +940,7 @@ void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
         auto peer = ConnectToPeer(seedIP, seedPort);
 
         auto peerState = std::make_shared<PeerState>(std::move(peer));
+        peerState->isOutbound = true;
 
         // outbound connection
         SendVersion(*peerState);
@@ -879,6 +952,11 @@ void Node::ConnectToSeed(const std::string& seedIP, uint16_t seedPort) {
 
         // start reading messages and monitoring this peer
         StartPeerLoop(peerState);
+
+        // seed the address manager with this seed's address
+        NetAddr seedAddr(NODE_NETWORK, seedIP, seedPort);
+        seedAddr.time = static_cast<uint32_t>(std::time(nullptr));
+        addrManager.Add(seedAddr);
 
     } catch (const std::exception& e) {
         std::cerr << "[node] Failed to connect to seed " << seedIP << ":" << seedPort << ": "
@@ -1031,6 +1109,8 @@ void Node::Start(const std::string& seedAddr) {
     server.Start();
     running = true;
 
+    addrManager.SetSelfAddr(ip, port);
+
     std::cout << "[node] Node started on " << ip << ":" << port << std::endl;
     std::cout << "[node] Blockchain height: " << blockchainHeight << std::endl;
 
@@ -1039,6 +1119,9 @@ void Node::Start(const std::string& seedAddr) {
 
     // start background cleanup of disconnected peers
     cleanupThread = std::jthread([this](std::stop_token st) { RunCleanupLoop(st); });
+
+    // start background outbound connection loop
+    outboundThread = std::jthread([this](std::stop_token st) { RunOutboundLoop(st); });
 
     // start background miner if a reward address was configured
     if (!minerAddress.empty()) {
@@ -1104,8 +1187,10 @@ void Node::Stop() {
 
     cleanupThread.request_stop();
     minerThread.request_stop();
+    outboundThread.request_stop();
     cleanupThread.join();
     minerThread.join();
+    outboundThread.join();
 
     // copy peers under lock, disconnect and wake all monitor threads
     std::vector<std::shared_ptr<PeerState>> peersSnapshot;
@@ -1141,4 +1226,195 @@ void Node::Stop() {
     }
 
     std::cout << "[node] Node stopped" << std::endl;
+}
+
+void Node::HandleAddr(PeerState& peerState, const std::vector<uint8_t>& payload) {
+    try {
+        MessageAddr addrMsg = MessageAddr::Deserialize(payload);
+
+        std::cout << "[node] Received addr with " << addrMsg.GetCount() << " address(es) from "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+
+        if (addrMsg.GetCount() == 0) {
+            return;
+        }
+
+        // add all received addresses to our address book
+        addrManager.AddMultiple(addrMsg.GetAddresses());
+
+        // if the addr message contains only 1-2 addresses, then it's a new peer
+        // so we relay it's infor to 2 others to help it get known
+        if (addrMsg.GetCount() <= 2) {
+            for (const auto& addr : addrMsg.GetAddresses()) {
+                GossipAddr(addr, peerState.peer->GetRemoteAddress());
+            }
+        }
+
+        std::cout << "[node] Address book now has " << addrManager.Size() << " entries"
+                  << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to process addr from " << peerState.peer->GetRemoteAddress()
+                  << ": " << e.what() << std::endl;
+    }
+}
+
+void Node::HandleGetAddr(PeerState& peerState) {
+    std::cout << "[node] Received getaddr from " << peerState.peer->GetRemoteAddress() << std::endl;
+
+    // the peer that asked for my address book
+    std::vector<NetAddr> addresses = addrManager.GetAddressesForGossip();
+
+    if (addresses.empty()) {
+        std::cout << "[node] No addresses to send to " << peerState.peer->GetRemoteAddress()
+                  << std::endl;
+        return;
+    }
+
+    MessageAddr addrMsg(addresses);
+    Message msg(MAGIC_CUSTOM, CMD_ADDR, addrMsg.Serialize());
+
+    try {
+        peerState.peer->SendMessage(msg);
+        std::cout << "[node] Sent addr with " << addresses.size() << " address(es) to "
+                  << peerState.peer->GetRemoteAddress() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[node] Failed to send addr to " << peerState.peer->GetRemoteAddress() << ": "
+                  << e.what() << std::endl;
+    }
+}
+
+void Node::GossipAddr(const NetAddr& addr, const std::string& sourcePeerAddr) {
+    MessageAddr addrMsg({addr});
+    Message msg(MAGIC_CUSTOM, CMD_ADDR, addrMsg.Serialize());
+
+    std::lock_guard<std::mutex> lock(peersMutex);
+
+    // collect eligible peers, like connected, handshake complete, and not the source
+    std::vector<std::shared_ptr<PeerState>> eligible;
+    for (const auto& peerState : peers) {
+        if (!peerState->peer->IsConnected()) continue;
+        if (!peerState->handshakeComplete) continue;
+        if (peerState->peer->GetRemoteAddress() == sourcePeerAddr) continue;
+        eligible.push_back(peerState);
+    }
+
+    if (eligible.empty()) return;
+
+    // relay to up to 2 randomly selected peers
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::shuffle(eligible.begin(), eligible.end(), gen);
+
+    size_t relayCount = std::min(static_cast<size_t>(2), eligible.size());
+    for (size_t i = 0; i < relayCount; i++) {
+        try {
+            eligible[i]->peer->SendMessage(msg);
+        } catch (const std::exception& e) {
+            std::cerr << "[node] Failed to gossip addr to " << eligible[i]->peer->GetRemoteAddress()
+                      << ": " << e.what() << std::endl;
+        }
+    }
+}
+
+void Node::RunOutboundLoop(std::stop_token stoken) {
+    std::cout << "[node] Outbound connection manager started (target=" << TARGET_OUTBOUND_PEERS
+              << ")" << std::endl;
+
+    std::stop_callback wake(stoken, [this] { outboundCV.notify_all(); });
+
+    while (!stoken.stop_requested()) {
+        // wait before checking
+        {
+            std::unique_lock<std::mutex> lock(outboundCVMtx);
+            outboundCV.wait_for(lock, std::chrono::seconds(OUTBOUND_INTERVAL_SECS),
+                                [&] { return stoken.stop_requested(); });
+        }
+
+        if (stoken.stop_requested()) break;
+
+        size_t outbound = CountOutboundPeers();
+        if (outbound >= TARGET_OUTBOUND_PEERS) {
+            continue;
+        }
+
+        size_t needed = TARGET_OUTBOUND_PEERS - outbound;
+        std::vector<std::string> connected = GetConnectedPeerAddrs();
+        std::vector<NetAddr> candidates = addrManager.GetRandomAddresses(needed, connected);
+
+        if (candidates.empty()) {
+            continue;
+        }
+
+        for (const auto& candidate : candidates) {
+            if (stoken.stop_requested()) break;
+
+            // check we haven't hit the global peer limit
+            {
+                std::lock_guard<std::mutex> lock(peersMutex);
+                if (peers.size() >= MAX_PEERS) break;
+            }
+
+            // extract IP and port from the NetAddr
+            std::string candidateIP =
+                std::to_string(candidate.ip[12]) + "." + std::to_string(candidate.ip[13]) + "." +
+                std::to_string(candidate.ip[14]) + "." + std::to_string(candidate.ip[15]);
+            uint16_t candidatePort = candidate.port;
+
+            std::cout << "[node] Attempting outbound connection to " << candidateIP << ":"
+                      << candidatePort << std::endl;
+
+            try {
+                auto peer = ConnectToPeer(candidateIP, candidatePort);
+                auto peerState = std::make_shared<PeerState>(std::move(peer));
+                peerState->isOutbound = true;
+
+                SendVersion(*peerState);
+
+                {
+                    std::lock_guard<std::mutex> lock(peersMutex);
+                    peers.push_back(peerState);
+                }
+
+                StartPeerLoop(peerState);
+
+                // mark this address as good, because it was recently seen
+                addrManager.MarkGood(candidateIP, candidatePort);
+
+                std::cout << "[node] Outbound connection established to " << candidateIP << ":"
+                          << candidatePort << std::endl;
+
+            } catch (const std::exception& e) {
+                std::cerr << "[node] Failed outbound connection to " << candidateIP << ":"
+                          << candidatePort << ": " << e.what() << std::endl;
+
+                // remove unreachable addresses from the book
+                addrManager.Remove(candidateIP, candidatePort);
+            }
+        }
+    }
+
+    std::cout << "[node] Outbound connection manager stopped" << std::endl;
+}
+
+size_t Node::CountOutboundPeers() {
+    std::lock_guard<std::mutex> lock(peersMutex);
+    size_t count = 0;
+    for (const auto& peerState : peers) {
+        if (peerState->isOutbound && peerState->peer->IsConnected()) {
+            count++;
+        }
+    }
+    return count;
+}
+
+std::vector<std::string> Node::GetConnectedPeerAddrs() {
+    std::lock_guard<std::mutex> lock(peersMutex);
+    std::vector<std::string> result;
+    result.reserve(peers.size());
+    for (const auto& peerState : peers) {
+        if (peerState->peer->IsConnected()) {
+            result.push_back(peerState->peer->GetRemoteAddress());
+        }
+    }
+    return result;
 }

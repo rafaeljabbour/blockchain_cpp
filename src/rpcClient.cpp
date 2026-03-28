@@ -31,6 +31,8 @@ void printUsage() {
     std::cout << "  verifytx -txid TXID\n";
     std::cout << "          fetch a Merkle proof from the node and verify it locally\n";
     std::cout << "          (SPV: no blockchain access required for the verification step)\n";
+    std::cout << "  getpeerinfo\n";
+    std::cout << "          get information about the connected peers and address book status\n";
     std::cout << "\nExamples:\n";
     std::cout << "  blockchain-rpc getmempool\n";
     std::cout << "  blockchain-rpc -rpcport 9335 getblockcount\n";

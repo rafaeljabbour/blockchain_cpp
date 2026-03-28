@@ -22,6 +22,7 @@ inline constexpr const char CMD_GETDATA[] = "getdata";
 inline constexpr const char CMD_BLOCK[] = "block";
 inline constexpr const char CMD_TX[] = "tx";
 inline constexpr const char CMD_ADDR[] = "addr";
+inline constexpr const char CMD_GETADDR[] = "getaddr";
 inline constexpr const char CMD_PING[] = "ping";
 inline constexpr const char CMD_PONG[] = "pong";
 
