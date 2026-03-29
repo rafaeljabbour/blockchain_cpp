@@ -78,6 +78,11 @@ Block Block::Deserialize(const std::vector<uint8_t>& serialized) {
     uint32_t txCount = ReadUint32(serialized, offset);
     offset += 4;
 
+    if (txCount > Policy::MAX_BLOCK_TXS) {
+        throw std::runtime_error("Block transaction count " + std::to_string(txCount) +
+                                 " exceeds maximum " + std::to_string(Policy::MAX_BLOCK_TXS));
+    }
+
     // each transaction
     for (uint32_t i = 0; i < txCount; i++) {
         // transaction size (4 bytes)

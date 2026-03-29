@@ -136,7 +136,7 @@ void Wallets::Deserialize(const std::vector<uint8_t>& serialized) {
         offset += 4;
 
         // address (variable bytes)
-        if (offset + addressLen > serialized.size()) {
+        if (addressLen > serialized.size() - offset) {
             throw std::runtime_error("Wallet file corrupted: address data truncated");
         }
         std::string address(serialized.begin() + offset, serialized.begin() + offset + addressLen);
@@ -146,9 +146,13 @@ void Wallets::Deserialize(const std::vector<uint8_t>& serialized) {
         uint32_t privKeyLen = ReadUint32(serialized, offset);
         offset += 4;
 
-        // private key bytes (variable bytes)
-        if (offset + privKeyLen > serialized.size()) {
+        // private key bytes (variable bytes), the secp256k1 private key is 32 bytes
+        if (privKeyLen > serialized.size() - offset) {
             throw std::runtime_error("Wallet file corrupted: private key data truncated");
+        }
+        if (privKeyLen != 32) {
+            throw std::runtime_error("Wallet file corrupted: expected 32-byte private key, got " +
+                                     std::to_string(privKeyLen));
         }
         std::vector<uint8_t> privKeyBytes(serialized.begin() + offset,
                                           serialized.begin() + offset + privKeyLen);
@@ -158,9 +162,13 @@ void Wallets::Deserialize(const std::vector<uint8_t>& serialized) {
         uint32_t pubKeyLen = ReadUint32(serialized, offset);
         offset += 4;
 
-        // public key bytes (variable bytes)
-        if (offset + pubKeyLen > serialized.size()) {
+        // public key bytes (variable bytes), the secp256k1 public key is 33 (compressed) or 65 (uncompressed)
+        if (pubKeyLen > serialized.size() - offset) {
             throw std::runtime_error("Wallet file corrupted: public key data truncated");
+        }
+        if (pubKeyLen != 33 && pubKeyLen != 65) {
+            throw std::runtime_error("Wallet file corrupted: expected 33 or 65-byte public key, got " +
+                                     std::to_string(pubKeyLen));
         }
         std::vector<uint8_t> pubKeyBytes(serialized.begin() + offset,
                                          serialized.begin() + offset + pubKeyLen);

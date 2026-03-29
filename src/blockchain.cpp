@@ -21,12 +21,7 @@ using BN_CTX_ptr = std::unique_ptr<BN_CTX, decltype(&BN_CTX_free)>;
 using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
 
 bool Blockchain::DBExists() {
-    leveldb::DB* rawDb = nullptr;
-    leveldb::Options options;
-    leveldb::Status status = leveldb::DB::Open(options, Config::GetBlocksPath(), &rawDb);
-    std::unique_ptr<leveldb::DB> db(rawDb);
-
-    return status.ok();
+    return std::filesystem::exists(Config::GetBlocksPath());
 }
 
 Blockchain::Blockchain() {

@@ -36,6 +36,9 @@ inline constexpr int PING_TIMEOUT_SECS = 30;
 // timeout for the miner's condition variable just incase we miss a notification
 inline constexpr int MINER_CV_TIMEOUT_SECS = 60;
 
+// max messages a peer can send per second before being disconnected
+inline constexpr int32_t MAX_PEER_MESSAGES_PER_SEC = 100;
+
 // tracks a peer connection, handshake state, and liveliness and thread
 struct PeerState {
         std::unique_ptr<Peer> peer;
@@ -48,6 +51,10 @@ struct PeerState {
         std::string userAgent;        // their software name/version
         int32_t protocolVersion = 0;  // their protocol version
         NetAddr listenAddr;           // their self-advertised listening address
+
+        // rate limiting so no spam
+        int32_t msgCount = 0;
+        std::chrono::steady_clock::time_point msgWindowStart = std::chrono::steady_clock::now();
 
         // liveliness monitoring
         std::mutex pongMutex;

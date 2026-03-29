@@ -35,6 +35,10 @@ void Transaction::Sign(EVP_PKEY* privKey, const std::map<std::string, Transactio
         return;
     }
 
+    if (!privKey) {
+        throw std::runtime_error("Cannot sign transaction: private key is null");
+    }
+
     // Verify all previous transactions exist
     for (const auto& vin : vin) {
         std::string txID = ByteArrayToHexString(vin.GetTxid());

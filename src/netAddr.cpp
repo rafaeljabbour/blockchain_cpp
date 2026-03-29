@@ -14,7 +14,11 @@ NetAddr::NetAddr(uint64_t services, const std::string& ipv4, uint16_t port)
     std::vector<uint8_t> ipv4Bytes;
 
     while (std::getline(ss, segment, '.')) {
-        ipv4Bytes.push_back(static_cast<uint8_t>(std::stoi(segment)));
+        int octet = std::stoi(segment);
+        if (octet < 0 || octet > 255) {
+            throw std::runtime_error("Invalid IPv4 octet: " + segment);
+        }
+        ipv4Bytes.push_back(static_cast<uint8_t>(octet));
     }
 
     if (ipv4Bytes.size() != 4) {

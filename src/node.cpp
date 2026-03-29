@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iostream>
 #include <random>
+#include <set>
 #include <stdexcept>
 
 #include "addrManager.h"
@@ -692,11 +693,25 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             // full verification with topological ordering
             int64_t totalFees = 0;
             std::map<std::string, Transaction> blockCtx;
+            // "txid:vout" keys for double-spend detection
+            std::set<std::string> spentInBlock;
             for (const auto& tx : block.GetTransactions()) {
                 if (tx.IsCoinbase()) {
                     blockCtx[ByteArrayToHexString(tx.GetID())] = tx;
                     continue;
                 }
+
+                // we check for double-spends within this block
+                for (const auto& vin : tx.GetVin()) {
+                    std::string outpoint =
+                        ByteArrayToHexString(vin.GetTxid()) + ":" + std::to_string(vin.GetVout());
+                    if (!spentInBlock.insert(outpoint).second) {
+                        std::cerr << "[node] Rejected block " << blockHash << ": double-spend on "
+                                  << outpoint << std::endl;
+                        return;
+                    }
+                }
+
                 try {
                     auto fee = blockchain->VerifyTransaction(&tx, blockCtx);
                     if (!fee) {
@@ -705,10 +720,11 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                                   << ByteArrayToHexString(tx.GetID()) << std::endl;
                         return;
                     }
-                    // this overflow check is a necessary compiler builtin, in order to make sure transactions don't overflow
+                    // this overflow check is a necessary compiler builtin, in order to make sure
+                    // transactions don't overflow
                     if (CheckedAdd(totalFees, *fee, totalFees)) {
-                        std::cerr << "[node] Rejected block " << blockHash
-                                  << ": fee overflow" << std::endl;
+                        std::cerr << "[node] Rejected block " << blockHash << ": fee overflow"
+                                  << std::endl;
                         return;
                     }
                 } catch (const std::exception& e) {
@@ -722,8 +738,8 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             // validate coinbase reward
             int64_t maxCoinbase;
             if (CheckedAdd(Consensus::GetBlockSubsidy(nextHeight), totalFees, maxCoinbase)) {
-                std::cerr << "[node] Rejected block " << blockHash
-                          << ": subsidy + fees overflow" << std::endl;
+                std::cerr << "[node] Rejected block " << blockHash << ": subsidy + fees overflow"
+                          << std::endl;
                 return;
             }
             int64_t coinbaseValue = 0;
@@ -775,9 +791,20 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
 
     if (cmd == CMD_VERSION) {
         HandleVersion(peerState, msg.GetPayload());
+        return;
     } else if (cmd == CMD_VERACK) {
         HandleVerack(peerState);
-    } else if (cmd == CMD_PING) {
+        return;
+    }
+
+    // all other messages require a completed handshake
+    if (!peerState.handshakeComplete) {
+        std::cerr << "[node] Dropping " << cmd << " from " << peerState.peer->GetRemoteAddress()
+                  << ": handshake not complete" << std::endl;
+        return;
+    }
+
+    if (cmd == CMD_PING) {
         HandlePing(peerState, msg.GetPayload());
     } else if (cmd == CMD_PONG) {
         HandlePong(peerState, msg.GetPayload());
@@ -858,19 +885,25 @@ void Node::MonitorPeer(std::shared_ptr<PeerState> peerState) {
 void Node::DisconnectPeer(const std::string& peerAddr) {
     std::cout << "[node] Disconnecting peer " << peerAddr << std::endl;
 
-    std::lock_guard<std::mutex> lock(peersMutex);
-    for (auto& peerState : peers) {
-        if (peerState->peer->GetRemoteAddress() == peerAddr) {
-            peerState->peer->Disconnect();
-
-            // wake monitor thread so it exits
-            {
-                std::lock_guard<std::mutex> pongLock(peerState->pongMutex);
-                peerState->pongReceived = true;
+    // we find the peer under lock, then disconnect and notify outside the lock
+    std::shared_ptr<PeerState> target;
+    {
+        std::lock_guard<std::mutex> lock(peersMutex);
+        for (auto& peerState : peers) {
+            if (peerState->peer->GetRemoteAddress() == peerAddr) {
+                target = peerState;
+                break;
             }
-            peerState->pongCV.notify_one();
-            return;
         }
+    }
+
+    if (target) {
+        target->peer->Disconnect();
+        {
+            std::lock_guard<std::mutex> pongLock(target->pongMutex);
+            target->pongReceived = true;
+        }
+        target->pongCV.notify_one();
     }
 }
 
@@ -927,6 +960,20 @@ void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
         try {
             while (running && peerState->peer->IsConnected()) {
                 Message msg = peerState->peer->ReceiveMessage();
+
+                // per-peer rate limiting
+                auto now = std::chrono::steady_clock::now();
+                if (now - peerState->msgWindowStart >= std::chrono::seconds(1)) {
+                    peerState->msgCount = 0;
+                    peerState->msgWindowStart = now;
+                }
+                if (++peerState->msgCount > MAX_PEER_MESSAGES_PER_SEC) {
+                    std::cerr << "[node] Rate limit exceeded by "
+                              << peerState->peer->GetRemoteAddress() << ", disconnecting"
+                              << std::endl;
+                    break;
+                }
+
                 DispatchMessage(*peerState, msg);
             }
         } catch (const std::exception& e) {

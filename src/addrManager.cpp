@@ -48,10 +48,15 @@ void AddrManager::Add(const NetAddr& addr) {
         return;
     }
 
-    // we don't add past capacity
-    // TODO: evict stale addresses
+    // if we are at capacity, we evict the oldest address to make room
     if (addresses.size() >= ADDR_MANAGER_MAX_ENTRIES) {
-        return;
+        auto oldest = addresses.begin();
+        for (auto it2 = addresses.begin(); it2 != addresses.end(); ++it2) {
+            if (it2->second.time < oldest->second.time) {
+                oldest = it2;
+            }
+        }
+        addresses.erase(oldest);
     }
 
     addresses[key] = addr;
@@ -87,7 +92,13 @@ void AddrManager::AddMultiple(const std::vector<NetAddr>& addrs) {
         }
 
         if (addresses.size() >= ADDR_MANAGER_MAX_ENTRIES) {
-            break;
+            auto oldest = addresses.begin();
+            for (auto it2 = addresses.begin(); it2 != addresses.end(); ++it2) {
+                if (it2->second.time < oldest->second.time) {
+                    oldest = it2;
+                }
+            }
+            addresses.erase(oldest);
         }
 
         addresses[key] = addr;
