@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -153,7 +154,7 @@ class Node {
         void ConnectToSeed(const std::string& seedIP, uint16_t seedPort);
 
         // starts listening and/or connects to a seed node
-        void Start(const std::string& seedAddr = "");
+        void Start(const std::string& seedAddr = "", volatile sig_atomic_t* shutdownFlag = nullptr);
 
         // when a transaction is created locally on this node, it is broadcast to all peers
         void BroadcastTransaction(const Transaction& tx);

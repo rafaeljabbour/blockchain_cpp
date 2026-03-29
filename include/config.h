@@ -31,6 +31,12 @@ namespace Consensus {
     inline constexpr int32_t MIN_BITS = 1;                        // easiest target
     inline constexpr int32_t MAX_BITS = 255;                      // hardest target
 
+    // timestamp validation
+    // the block timestamp must exceed median of last N blocks
+    inline constexpr int32_t MEDIAN_TIME_SPAN = 11;
+    // max seconds a block timestamp may be ahead of local clock
+    inline constexpr int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;  // 2 hours
+
     // genesis block
     inline const std::string GENESIS_COINBASE_DATA =
         "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";

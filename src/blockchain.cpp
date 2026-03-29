@@ -63,6 +63,8 @@ Blockchain::Blockchain() {
     }
     std::vector<uint8_t> heightBytes(heightString.begin(), heightString.end());
     tipHeight = static_cast<int32_t>(ReadUint32(heightBytes, 0));
+
+    LoadRecentTimestamps();
 }
 
 std::unique_ptr<Blockchain> Blockchain::CreateBlockchain(const std::string& address) {
@@ -172,6 +174,7 @@ Block Blockchain::MineBlock(const std::vector<Transaction>& transactions) {
 
     tip = newHash;
     tipHeight++;
+    PushTimestamp(newBlock.GetTimestamp());
     return newBlock;
 }
 
@@ -187,6 +190,21 @@ void Blockchain::AddBlock(const Block& block) {
         throw std::runtime_error("Block difficulty mismatch: expected bits=" +
                                  std::to_string(expectedBits) +
                                  ", got bits=" + std::to_string(block.GetBits()));
+    }
+
+    // the block timestamp must exceed median-time-past of previous blocks
+    int64_t mtp = GetMedianTimePast();
+    if (block.GetTimestamp() <= mtp) {
+        throw std::runtime_error("Block timestamp " + std::to_string(block.GetTimestamp()) +
+                                 " not after median-time-past " + std::to_string(mtp));
+    }
+
+    // the block timestamp must not be more than 2 hours in the future
+    int64_t now = std::time(nullptr);
+    if (block.GetTimestamp() > now + Consensus::MAX_FUTURE_BLOCK_TIME) {
+        throw std::runtime_error("Block timestamp " + std::to_string(block.GetTimestamp()) +
+                                 " too far in the future (limit " +
+                                 std::to_string(now + Consensus::MAX_FUTURE_BLOCK_TIME) + ")");
     }
 
     std::vector<uint8_t> blockHash = block.GetHash();
@@ -224,6 +242,7 @@ void Blockchain::AddBlock(const Block& block) {
 
     tip = blockHash;
     tipHeight++;
+    PushTimestamp(block.GetTimestamp());
 }
 
 Block Blockchain::GetBlock(const std::vector<uint8_t>& hash) const {
@@ -458,6 +477,35 @@ int32_t Blockchain::GetBlockHeight(const std::vector<uint8_t>& hash) const {
 
     std::vector<uint8_t> heightBytes(heightString.begin(), heightString.end());
     return static_cast<int32_t>(ReadUint32(heightBytes, 0));
+}
+
+void Blockchain::LoadRecentTimestamps() {
+    recentTimestamps.clear();
+    std::vector<uint8_t> current = tip;
+
+    for (int32_t i = 0; i < Consensus::MEDIAN_TIME_SPAN && current != std::vector<uint8_t>(32, 0);
+         ++i) {
+        Block block = GetBlock(current);
+        recentTimestamps.push_back(block.GetTimestamp());
+        current = block.GetPreviousHash();
+    }
+}
+
+void Blockchain::PushTimestamp(int64_t ts) {
+    recentTimestamps.push_front(ts);
+    while (static_cast<int32_t>(recentTimestamps.size()) > Consensus::MEDIAN_TIME_SPAN) {
+        recentTimestamps.pop_back();
+    }
+}
+
+int64_t Blockchain::GetMedianTimePast() const {
+    if (recentTimestamps.empty()) {
+        return 0;
+    }
+
+    std::vector<int64_t> sorted(recentTimestamps.begin(), recentTimestamps.end());
+    std::sort(sorted.begin(), sorted.end());
+    return sorted[sorted.size() / 2];
 }
 
 int32_t Blockchain::GetNextWorkRequired(int32_t nextBlockHeight) const {

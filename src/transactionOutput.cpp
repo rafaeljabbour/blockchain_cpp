@@ -7,7 +7,12 @@
 #include "wallet.h"
 
 TransactionOutput::TransactionOutput(int64_t value, const std::vector<uint8_t>& pubKeyHash)
-    : value(value), pubKeyHash(pubKeyHash) {}
+    : value(value), pubKeyHash(pubKeyHash) {
+    if (value < 0) {
+        throw std::runtime_error("Transaction output value must be non-negative, got " +
+                                 std::to_string(value));
+    }
+}
 
 void TransactionOutput::Lock(const std::vector<uint8_t>& address) {
     std::vector<uint8_t> decoded = Base58Decode(address);
@@ -41,6 +46,10 @@ std::pair<TransactionOutput, size_t> TransactionOutput::Deserialize(
 
     // value (8 bytes)
     output.value = static_cast<int64_t>(ReadUint64(data, offset));
+    if (output.value < 0) {
+        throw std::runtime_error("Deserialized transaction output has negative value: " +
+                                 std::to_string(output.value));
+    }
     offset += 8;
 
     // pubKeyHash size (4 bytes)

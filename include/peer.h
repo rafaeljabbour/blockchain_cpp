@@ -10,7 +10,8 @@
 #include "message.h"
 
 // default receive timeout in seconds
-inline constexpr int PEER_RECV_TIMEOUT_SECS = 0;
+// note: has to be > ping interval + timeout to avoid false disconnects
+inline constexpr int PEER_RECV_TIMEOUT_SECS = 180;
 
 // default send timeout in seconds
 inline constexpr int PEER_SEND_TIMEOUT_SECS = 30;

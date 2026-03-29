@@ -1,5 +1,6 @@
 #include "cli.h"
 
+#include <csignal>
 #include <ctime>
 #include <iostream>
 #include <stdexcept>
@@ -128,12 +129,32 @@ void CLI::send(const std::string& from, const std::string& to, int64_t amount) {
     std::cout << "Success!" << std::endl;
 }
 
+namespace {
+    volatile sig_atomic_t g_shutdown = 0;
+
+    void SignalHandler(int) { g_shutdown = 1; }
+}  // namespace
+
 void CLI::startNode(uint16_t port, const std::string& seedAddr, uint16_t rpcPort,
                     const std::string& minerAddress) {
     Node node("0.0.0.0", port, rpcPort, minerAddress);
 
-    // handles seed connection and then enters the accept loop
-    node.Start(seedAddr);
+    g_shutdown = 0;
+
+    // install signal handlers
+    struct sigaction sa {};
+    sa.sa_handler = SignalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
+    // blocks in the accept loop
+    // it will then return when shutdownFlag is set and accept() is interrupted
+    node.Start(seedAddr, &g_shutdown);
+
+    // full cleanup runs here on the main thread
+    node.Stop();
 }
 
 void CLI::run(int argc, char* argv[]) {

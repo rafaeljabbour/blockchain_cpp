@@ -17,6 +17,7 @@
 #include "messagePing.h"
 #include "messageVerack.h"
 #include "messageVersion.h"
+#include "overflow.h"
 #include "proofOfWork.h"
 #include "serialization.h"
 #include "transaction.h"
@@ -704,7 +705,12 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                                   << ByteArrayToHexString(tx.GetID()) << std::endl;
                         return;
                     }
-                    totalFees += *fee;
+                    // this overflow check is a necessary compiler builtin, in order to make sure transactions don't overflow
+                    if (CheckedAdd(totalFees, *fee, totalFees)) {
+                        std::cerr << "[node] Rejected block " << blockHash
+                                  << ": fee overflow" << std::endl;
+                        return;
+                    }
                 } catch (const std::exception& e) {
                     std::cerr << "[node] Rejected block " << blockHash
                               << ": tx verification failed: " << e.what() << std::endl;
@@ -714,10 +720,19 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             }
 
             // validate coinbase reward
-            int64_t maxCoinbase = Consensus::GetBlockSubsidy(nextHeight) + totalFees;
+            int64_t maxCoinbase;
+            if (CheckedAdd(Consensus::GetBlockSubsidy(nextHeight), totalFees, maxCoinbase)) {
+                std::cerr << "[node] Rejected block " << blockHash
+                          << ": subsidy + fees overflow" << std::endl;
+                return;
+            }
             int64_t coinbaseValue = 0;
             for (const auto& out : block.GetTransactions()[0].GetVout()) {
-                coinbaseValue += out.GetValue();
+                if (CheckedAdd(coinbaseValue, out.GetValue(), coinbaseValue)) {
+                    std::cerr << "[node] Rejected block " << blockHash
+                              << ": coinbase value overflow" << std::endl;
+                    return;
+                }
             }
             if (coinbaseValue > maxCoinbase) {
                 std::cerr << "[node] Rejected block " << blockHash << ": coinbase value "
@@ -1105,7 +1120,7 @@ void Node::RunMinerLoop(std::stop_token stoken) {
     std::cout << "[miner] Background mining thread stopped" << std::endl;
 }
 
-void Node::Start(const std::string& seedAddr) {
+void Node::Start(const std::string& seedAddr, volatile sig_atomic_t* shutdownFlag) {
     server.Start();
     running = true;
 
@@ -1145,6 +1160,11 @@ void Node::Start(const std::string& seedAddr) {
 
     // blocks until a peer connects, then spawns a handler thread
     while (running) {
+        // check external shutdown flag (set by signal handler)
+        if (shutdownFlag && *shutdownFlag) {
+            break;
+        }
+
         try {
             auto peer = server.AcceptConnection();
             if (!peer) {
@@ -1188,9 +1208,9 @@ void Node::Stop() {
     cleanupThread.request_stop();
     minerThread.request_stop();
     outboundThread.request_stop();
-    cleanupThread.join();
-    minerThread.join();
-    outboundThread.join();
+    if (cleanupThread.joinable()) cleanupThread.join();
+    if (minerThread.joinable()) minerThread.join();
+    if (outboundThread.joinable()) outboundThread.join();
 
     // copy peers under lock, disconnect and wake all monitor threads
     std::vector<std::shared_ptr<PeerState>> peersSnapshot;

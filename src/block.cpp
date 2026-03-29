@@ -128,6 +128,18 @@ bool Block::CheckBlockSize(const Block& block, size_t knownSerializedSize) {
 
     if (txs.empty() || !txs[0].IsCoinbase()) return false;
 
+    // coinbase must have exactly one input with empty txid and vout == -1
+    const auto& coinBaseVin = txs[0].GetVin();
+    if (coinBaseVin.size() != 1 || !coinBaseVin[0].GetTxid().empty() ||
+        coinBaseVin[0].GetVout() != -1) {
+        return false;
+    }
+
+    // no other transaction may be a coinbase
+    for (size_t i = 1; i < txs.size(); ++i) {
+        if (txs[i].IsCoinbase()) return false;
+    }
+
     if (txs.size() > Policy::MAX_BLOCK_TXS) return false;
 
     // if size is known, use it, otherwise serialize the block

@@ -4,6 +4,7 @@
 #include <leveldb/db.h>
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -26,6 +27,13 @@ class Blockchain {
         std::vector<uint8_t> tip;         // hash of the last block
         int32_t tipHeight{0};             // height of tip, cached in memory and persisted to DB
         std::unique_ptr<leveldb::DB> db;  // leveldb for storing blocks (persistency)
+
+        // cached timestamps of the last MEDIAN_TIME_SPAN blocks
+        std::deque<int64_t> recentTimestamps;
+        void PushTimestamp(int64_t ts);
+        void LoadRecentTimestamps();
+
+        int64_t GetMedianTimePast() const;
 
     public:
         Blockchain();

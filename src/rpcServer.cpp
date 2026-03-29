@@ -18,7 +18,8 @@ void RPCServer::RegisterMethod(const std::string& name, std::function<json(const
 }
 
 void RPCServer::HandleConnection(int clientfd) {
-    // read until newline or connection close
+    // read until newline or connection close, capped at 1 MB
+    static constexpr size_t MAX_RPC_REQUEST_SIZE = 1'000'000;
     std::string request;
     char buf[4096];
 
@@ -29,6 +30,11 @@ void RPCServer::HandleConnection(int clientfd) {
         }
         buf[n] = '\0';
         request += buf;
+
+        if (request.size() > MAX_RPC_REQUEST_SIZE) {
+            close(clientfd);
+            return;
+        }
 
         // check for newline delimiter
         if (request.find('\n') != std::string::npos) {
@@ -204,7 +210,8 @@ json RPCCall(uint16_t port, const std::string& method, const json& params) {
         totalSent += static_cast<size_t>(n);
     }
 
-    // read response
+    // read response, capped at 1 MB
+    static constexpr size_t MAX_RPC_RESPONSE_SIZE = 1'000'000;
     std::string responseStr;
     char buf[4096];
     while (true) {
@@ -214,6 +221,11 @@ json RPCCall(uint16_t port, const std::string& method, const json& params) {
         }
         buf[n] = '\0';
         responseStr += buf;
+
+        if (responseStr.size() > MAX_RPC_RESPONSE_SIZE) {
+            close(sockfd);
+            throw std::runtime_error("RPC response exceeded maximum size");
+        }
 
         if (responseStr.find('\n') != std::string::npos) {
             break;
