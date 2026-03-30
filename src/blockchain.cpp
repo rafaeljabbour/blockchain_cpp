@@ -20,9 +20,7 @@
 using BN_CTX_ptr = std::unique_ptr<BN_CTX, decltype(&BN_CTX_free)>;
 using BN_ptr = std::unique_ptr<BIGNUM, decltype(&BN_free)>;
 
-bool Blockchain::DBExists() {
-    return std::filesystem::exists(Config::GetBlocksPath());
-}
+bool Blockchain::DBExists() { return std::filesystem::exists(Config::GetBlocksPath()); }
 
 Blockchain::Blockchain() {
     if (!DBExists()) {
@@ -182,9 +180,9 @@ void Blockchain::AddBlock(const Block& block) {
     // verify the block's difficulty matches what our chain requires
     int32_t expectedBits = GetNextWorkRequired(tipHeight + 1);
     if (block.GetBits() != expectedBits) {
-        throw std::runtime_error("Block difficulty mismatch: expected bits=" +
-                                 std::to_string(expectedBits) +
-                                 ", got bits=" + std::to_string(block.GetBits()));
+        throw std::runtime_error(
+            "Block difficulty mismatch: expected bits=" + std::to_string(expectedBits) +
+            ", got bits=" + std::to_string(block.GetBits()));
     }
 
     // the block timestamp must exceed median-time-past of previous blocks
@@ -377,7 +375,7 @@ void Blockchain::SignTransaction(Transaction* tx, Wallet* wallet) {
         prevTXs.insert({ByteArrayToHexString(prevTX.GetID()), prevTX});
     }
 
-    tx->Sign(wallet->privateKey.get(), prevTXs);
+    wallet->SignTransaction(tx, prevTXs);
 }
 
 std::optional<int64_t> Blockchain::VerifyTransaction(const Transaction* tx) {

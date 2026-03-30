@@ -142,7 +142,7 @@ void CLI::startNode(uint16_t port, const std::string& seedAddr, uint16_t rpcPort
     g_shutdown = 0;
 
     // install signal handlers
-    struct sigaction sa {};
+    struct sigaction sa{};
     sa.sa_handler = SignalHandler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;

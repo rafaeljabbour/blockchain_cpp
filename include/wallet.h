@@ -4,6 +4,7 @@
 #include <openssl/evp.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,8 +15,10 @@ const int ADDRESS_CHECKSUM_LEN = 4;
 // RAII type alias for ownership
 using EVP_PKEY_owned = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
 
+// Forward declaration
+class Transaction;
+
 class Wallet {
-        friend class Blockchain;
         friend class Wallets;
 
     private:
@@ -37,6 +40,9 @@ class Wallet {
 
         std::vector<uint8_t> GetAddress() const;
         const std::vector<uint8_t>& GetPublicKey() const { return publicKey; }
+
+        // signs a transaction using this wallet's private key.
+        void SignTransaction(Transaction* tx, const std::map<std::string, Transaction>& prevTXs);
 
         static std::vector<uint8_t> HashPubKey(const std::vector<uint8_t>& pubKey);
         static bool ValidateAddress(const std::string& address);

@@ -5,15 +5,58 @@
 
 #include "serialization.h"
 
-void Mempool::AddTransaction(const Transaction& tx, double feeRate) {
+bool Mempool::EvictLowestFeeRate() {
+    if (entries.empty()) return false;
+
+    auto worst = entries.begin();
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        if (it->second.feeRate < worst->second.feeRate) {
+            worst = it;
+        }
+    }
+
+    totalBytes -= worst->second.txSize;
+    std::cout << "[mempool] Evicted " << worst->first.substr(0, 16) << "..."
+              << " feeRate=" << worst->second.feeRate << std::endl;
+    entries.erase(worst);
+    return true;
+}
+
+bool Mempool::AddTransaction(const Transaction& tx, double feeRate) {
     std::string txid = ByteArrayToHexString(tx.GetID());
+    size_t txSize = tx.Serialize().size();
 
     std::lock_guard<std::mutex> lock(mtx);
-    entries[txid] = MempoolEntry{tx, feeRate};
 
-    std::cout << "[mempool] Added transaction " << txid.substr(0, 16) << "..."
+    // already have it
+    if (entries.count(txid)) return true;
+
+    // evict until we're under both limits
+    while ((totalBytes + txSize > Policy::MAX_MEMPOOL_SIZE ||
+            entries.size() >= Policy::MAX_MEMPOOL_ENTRIES) &&
+           !entries.empty()) {
+        // don't evict if this tx has a lower fee rate than the worst entry
+        auto worst = entries.begin();
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (it->second.feeRate < worst->second.feeRate) {
+                worst = it;
+            }
+        }
+        if (feeRate <= worst->second.feeRate) {
+            std::cerr << "[mempool] Rejected " << txid.substr(0, 16) << "..."
+                      << ": fee rate " << feeRate << " too low for full mempool" << std::endl;
+            return false;
+        }
+        EvictLowestFeeRate();
+    }
+
+    entries[txid] = MempoolEntry{tx, feeRate, txSize};
+    totalBytes += txSize;
+
+    std::cout << "[mempool] Added " << txid.substr(0, 16) << "..."
               << " feeRate=" << feeRate << " raf/byte"
-              << " (" << entries.size() << " total)" << std::endl;
+              << " (" << entries.size() << " txs, " << totalBytes / 1024 << " KB)" << std::endl;
+    return true;
 }
 
 void Mempool::RemoveBlockTransactions(const Block& block) {
@@ -23,6 +66,7 @@ void Mempool::RemoveBlockTransactions(const Block& block) {
         std::string txid = ByteArrayToHexString(tx.GetID());
         auto it = entries.find(txid);
         if (it != entries.end()) {
+            totalBytes -= it->second.txSize;
             entries.erase(it);
             std::cout << "[mempool] Removed mined transaction " << txid << std::endl;
         }

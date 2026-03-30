@@ -3,17 +3,33 @@
 #include <leveldb/iterator.h>
 #include <leveldb/write_batch.h>
 
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 
 #include "block.h"
 #include "blockchain.h"
+#include "config.h"
 #include "utils.h"
 
 UTXOSet::UTXOSet(Blockchain* bc) : blockchain(bc) {
     if (!bc) {
         throw std::invalid_argument("Blockchain pointer cannot be null");
     }
+
+    // ensure parent directory exists
+    std::filesystem::create_directories(std::filesystem::path(Config::GetUTXOPath()).parent_path());
+
+    leveldb::DB* rawDb = nullptr;
+    leveldb::Options options;
+    options.create_if_missing = true;
+
+    leveldb::Status status = leveldb::DB::Open(options, Config::GetUTXOPath(), &rawDb);
+    if (!status.ok()) {
+        throw std::runtime_error("Error opening UTXO database: " + status.ToString());
+    }
+
+    db.reset(rawDb);
 }
 
 std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendableOutputs(
@@ -24,18 +40,13 @@ std::pair<int64_t, std::map<std::string, std::vector<int>>> UTXOSet::FindSpendab
 
     int32_t currentHeight = blockchain->GetChainHeight();
 
-    std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
+    std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
 
     for (it->SeekToFirst(); it->Valid() && !found; it->Next()) {
         std::string key = it->key().ToString();
         std::string value = it->value().ToString();
 
-        // only read UTXO entries
-        if (key.empty() || key[0] != 'u') {
-            continue;
-        }
-
-        std::string txID = ByteArrayToHexString(std::vector<uint8_t>(key.begin() + 1, key.end()));
+        std::string txID = ByteArrayToHexString(std::vector<uint8_t>(key.begin(), key.end()));
 
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
@@ -73,16 +84,11 @@ std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pub
 
     int32_t currentHeight = blockchain->GetChainHeight();
 
-    std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
+    std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
 
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
         std::string key = it->key().ToString();
         std::string value = it->value().ToString();
-
-        // skip non-UTXO entries
-        if (key.empty() || key[0] != 'u') {
-            continue;
-        }
 
         std::vector<uint8_t> valueBytes(value.begin(), value.end());
         TXOutputs outs = TXOutputs::Deserialize(valueBytes);
@@ -112,15 +118,10 @@ std::vector<TransactionOutput> UTXOSet::FindUTXO(const std::vector<uint8_t>& pub
 int UTXOSet::CountTransactions() const {
     int counter = 0;
 
-    std::unique_ptr<leveldb::Iterator> it(blockchain->db->NewIterator(leveldb::ReadOptions()));
+    std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
 
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
-        std::string key = it->key().ToString();
-
-        // Only count UTXO entries
-        if (!key.empty() && key[0] == 'u') {
-            counter++;
-        }
+        counter++;
     }
 
     if (!it->status().ok()) {
@@ -131,47 +132,36 @@ int UTXOSet::CountTransactions() const {
 }
 
 void UTXOSet::Reindex() {
-    leveldb::DB* db = blockchain->db.get();
-
-    // find all the UTXO entries currently there
+    // wipe the entire UTXO database
     std::vector<std::string> keysToDelete;
 
-    std::unique_ptr<leveldb::Iterator> it(db->NewIterator(leveldb::ReadOptions()));
+    auto it = std::unique_ptr<leveldb::Iterator>(db->NewIterator(leveldb::ReadOptions()));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
-        std::string key = it->key().ToString();
-        if (!key.empty() && key[0] == 'u') {
-            // UTXO entry
-            keysToDelete.push_back(key);
-        }
+        keysToDelete.push_back(it->key().ToString());
     }
 
     if (!it->status().ok()) {
-        throw std::runtime_error("Error scanning for UTXO entries: " + it->status().ToString());
+        throw std::runtime_error("Error scanning UTXO database: " + it->status().ToString());
     }
 
-    // delete the old UTXO entries
-    leveldb::WriteBatch batch;
+    leveldb::WriteBatch deleteBatch;
     for (const auto& key : keysToDelete) {
-        batch.Delete(key);
+        deleteBatch.Delete(key);
     }
 
-    leveldb::Status status = db->Write(leveldb::WriteOptions(), &batch);
+    leveldb::Status status = db->Write(leveldb::WriteOptions(), &deleteBatch);
     if (!status.ok()) {
-        throw std::runtime_error("Error clearing UTXO set: " + status.ToString());
+        throw std::runtime_error("Error clearing UTXO database: " + status.ToString());
     }
 
     // build new UTXO set from the blockchain
     std::map<std::string, TXOutputs> UTXO = blockchain->FindUTXO();
 
-    // write the new UTXO set to the database
+    // write the new UTXO set, where the keys are raw txid bytes
     leveldb::WriteBatch newBatch;
 
     for (const auto& [txID, outs] : UTXO) {
-        std::vector<uint8_t> key;
-        key.push_back('u');
-        std::vector<uint8_t> txHash = HexStringToByteArray(txID);
-        key.insert(key.end(), txHash.begin(), txHash.end());
-
+        std::vector<uint8_t> key = HexStringToByteArray(txID);
         std::vector<uint8_t> value = outs.Serialize();
 
         newBatch.Put(ByteArrayToSlice(key), ByteArrayToSlice(value));
@@ -184,7 +174,6 @@ void UTXOSet::Reindex() {
 }
 
 void UTXOSet::Update(const Block& block) {
-    leveldb::DB* db = blockchain->db.get();
     leveldb::WriteBatch batch;
 
     // the tip height reflects this block as it's added after the block is added
@@ -196,12 +185,8 @@ void UTXOSet::Update(const Block& block) {
                 std::vector<uint8_t> txid = vin.GetTxid();
                 std::string valueStr;
 
-                std::vector<uint8_t> key;
-                key.push_back('u');
-                key.insert(key.end(), txid.begin(), txid.end());
-
                 leveldb::Status status =
-                    db->Get(leveldb::ReadOptions(), ByteArrayToSlice(key), &valueStr);
+                    db->Get(leveldb::ReadOptions(), ByteArrayToSlice(txid), &valueStr);
 
                 if (status.ok()) {
                     std::vector<uint8_t> valueBytes(valueStr.begin(), valueStr.end());
@@ -212,11 +197,11 @@ void UTXOSet::Update(const Block& block) {
 
                     // if no outputs remain, we delete the transaction from UTXO set
                     if (outs.outputs.empty()) {
-                        batch.Delete(ByteArrayToSlice(key));
+                        batch.Delete(ByteArrayToSlice(txid));
                     } else {
                         // else we update with the remaining outputs and preserve the metadata
                         std::vector<uint8_t> serialized = outs.Serialize();
-                        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
+                        batch.Put(ByteArrayToSlice(txid), ByteArrayToSlice(serialized));
                     }
                 } else if (!status.IsNotFound()) {
                     throw std::runtime_error("Error reading UTXO: " + status.ToString());
@@ -234,16 +219,11 @@ void UTXOSet::Update(const Block& block) {
             newOutputs.outputs[static_cast<int>(i)] = vout[i];
         }
 
-        std::vector<uint8_t> key;
-        key.push_back('u');
         std::vector<uint8_t> txHash = tx.GetID();
-        key.insert(key.end(), txHash.begin(), txHash.end());
-
         std::vector<uint8_t> serialized = newOutputs.Serialize();
-        batch.Put(ByteArrayToSlice(key), ByteArrayToSlice(serialized));
+        batch.Put(ByteArrayToSlice(txHash), ByteArrayToSlice(serialized));
     }
 
-    // atomic write to update db
     leveldb::Status status = db->Write(leveldb::WriteOptions(), &batch);
     if (!status.ok()) {
         throw std::runtime_error("Error updating UTXO set: " + status.ToString());

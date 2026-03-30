@@ -13,18 +13,23 @@
 struct MempoolEntry {
         Transaction tx;
         double feeRate;  // raffys per serialized byte
+        size_t txSize;   // serialized size in bytes
 };
 
 // stores unconfirmed transactions.
 class Mempool {
     private:
         std::map<std::string, MempoolEntry> entries;
+        size_t totalBytes = 0;
         mutable std::mutex mtx;
+
+        // evicts the lowest fee rate entry, returns false if mempool is empty
+        bool EvictLowestFeeRate();
 
     public:
         Mempool() = default;
 
-        void AddTransaction(const Transaction& tx, double feeRate);
+        bool AddTransaction(const Transaction& tx, double feeRate);
         void RemoveBlockTransactions(const Block& block);
 
         // it'll be ordered by descending fee rate for miner selection

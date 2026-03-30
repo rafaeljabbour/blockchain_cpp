@@ -11,6 +11,7 @@
 
 #include "base58.h"
 #include "crypto.h"
+#include "transaction.h"
 
 // RAII type aliases resources
 using EVP_PKEY_CTX_ptr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
@@ -192,4 +193,8 @@ std::vector<uint8_t> Wallet::GetPrivateKeyBytes() const {
     }
 
     return privKey;
+}
+
+void Wallet::SignTransaction(Transaction* tx, const std::map<std::string, Transaction>& prevTXs) {
+    tx->Sign(privateKey.get(), prevTXs);
 }

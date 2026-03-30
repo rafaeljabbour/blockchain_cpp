@@ -127,7 +127,9 @@ void Node::RegisterRPCMethods() {
             return json{{"txid", txid}, {"status", "already in mempool"}};
         }
 
-        mempool.AddTransaction(tx, feeRate);
+        if (!mempool.AddTransaction(tx, feeRate)) {
+            return json{{"error", "mempool full, fee rate too low"}};
+        }
         minerCV.notify_one();
         RelayTransaction(tx, "");
 
@@ -574,7 +576,9 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             return;
         }
 
-        mempool.AddTransaction(tx, feeRate);
+        if (!mempool.AddTransaction(tx, feeRate)) {
+            return;
+        }
         minerCV.notify_one();
 
         // flood the inventory to all other peers
@@ -650,7 +654,9 @@ void Node::BroadcastTransaction(const Transaction& tx) {
                 return;
             }
         }
-        mempool.AddTransaction(tx, feeRate);
+        if (!mempool.AddTransaction(tx, feeRate)) {
+            return;
+        }
         minerCV.notify_one();
     }
 

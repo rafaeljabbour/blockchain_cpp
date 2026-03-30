@@ -18,11 +18,8 @@
 
 // Forward declaration
 class Wallet;
-class UTXOSet;
 
 class Blockchain {
-        friend class UTXOSet;
-
     private:
         std::vector<uint8_t> tip;         // hash of the last block
         int32_t tipHeight{0};             // height of tip, cached in memory and persisted to DB

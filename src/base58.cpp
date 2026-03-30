@@ -32,7 +32,7 @@ std::vector<uint8_t> Base58Encode(const std::vector<uint8_t>& input) {
     if (!BN_bin2bn(input.data(), input.size(), x.get())) {
         throw std::runtime_error("BN_bin2bn failed in Base58 encoding");
     }
-    
+
     BN_set_word(base.get(), sizeof(BASE58_ALPHABET) - 1);
     BN_zero(zero.get());
 

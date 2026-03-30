@@ -1,8 +1,11 @@
 #ifndef UTXOSET_H
 #define UTXOSET_H
 
+#include <leveldb/db.h>
+
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,12 +15,13 @@ class Blockchain;
 class Block;
 class Transaction;
 
-// cache for quick blockchain transaction lookups (A set of unspent transaction outputs)
+// this is a persistent UTXO set backed by its own LevelDB instance under data/utxo/
 class UTXOSet {
         friend class Transaction;
 
     private:
         Blockchain* blockchain;
+        std::unique_ptr<leveldb::DB> db;
 
     public:
         explicit UTXOSet(Blockchain* bc);

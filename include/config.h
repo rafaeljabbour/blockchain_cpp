@@ -46,9 +46,11 @@ namespace Consensus {
 // network policy
 namespace Policy {
 
-    inline constexpr uint32_t MAX_BLOCK_SIZE = 1'000'000;  // 1 MB
-    inline constexpr uint32_t MAX_BLOCK_TXS = 5'000;       // sanity cap
-    inline constexpr double MIN_RELAY_FEE_RATE = 0.001;    // per serialized byte
+    inline constexpr uint32_t MAX_BLOCK_SIZE = 1'000'000;   // 1 MB
+    inline constexpr uint32_t MAX_BLOCK_TXS = 5'000;        // sanity cap
+    inline constexpr double MIN_RELAY_FEE_RATE = 0.001;     // per serialized byte
+    inline constexpr size_t MAX_MEMPOOL_SIZE = 50'000'000;  // 50 MB total serialized bytes
+    inline constexpr size_t MAX_MEMPOOL_ENTRIES = 10'000;   // hard cap on entry count
 
 }  // namespace Policy
 
@@ -60,6 +62,7 @@ namespace Config {
     const std::string& GetDataDir();
 
     std::string GetBlocksPath();
+    std::string GetUTXOPath();
     std::string GetWalletPath();
 
 }  // namespace Config

@@ -5,20 +5,22 @@
 
 namespace Config {
 
-// internal storage for the data directory
-static std::string dataDir = DEFAULT_DATA_DIR;
+    // internal storage for the data directory
+    static std::string dataDir = DEFAULT_DATA_DIR;
 
-void SetDataDir(const std::string& dir) {
-    if (dir.empty()) {
-        throw std::invalid_argument("Data directory cannot be empty");
+    void SetDataDir(const std::string& dir) {
+        if (dir.empty()) {
+            throw std::invalid_argument("Data directory cannot be empty");
+        }
+        dataDir = dir;
     }
-    dataDir = dir;
-}
 
-const std::string& GetDataDir() { return dataDir; }
+    const std::string& GetDataDir() { return dataDir; }
 
-std::string GetBlocksPath() { return (std::filesystem::path(dataDir) / "blocks").string(); }
+    std::string GetBlocksPath() { return (std::filesystem::path(dataDir) / "blocks").string(); }
 
-std::string GetWalletPath() { return (std::filesystem::path(dataDir) / "wallet.dat").string(); }
+    std::string GetUTXOPath() { return (std::filesystem::path(dataDir) / "utxo").string(); }
+
+    std::string GetWalletPath() { return (std::filesystem::path(dataDir) / "wallet.dat").string(); }
 
 }  // namespace Config

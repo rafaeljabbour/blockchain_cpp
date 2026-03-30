@@ -162,13 +162,15 @@ void Wallets::Deserialize(const std::vector<uint8_t>& serialized) {
         uint32_t pubKeyLen = ReadUint32(serialized, offset);
         offset += 4;
 
-        // public key bytes (variable bytes), the secp256k1 public key is 33 (compressed) or 65 (uncompressed)
+        // public key bytes (variable bytes), the secp256k1 public key is 33 (compressed) or 65
+        // (uncompressed)
         if (pubKeyLen > serialized.size() - offset) {
             throw std::runtime_error("Wallet file corrupted: public key data truncated");
         }
         if (pubKeyLen != 33 && pubKeyLen != 65) {
-            throw std::runtime_error("Wallet file corrupted: expected 33 or 65-byte public key, got " +
-                                     std::to_string(pubKeyLen));
+            throw std::runtime_error(
+                "Wallet file corrupted: expected 33 or 65-byte public key, got " +
+                std::to_string(pubKeyLen));
         }
         std::vector<uint8_t> pubKeyBytes(serialized.begin() + offset,
                                          serialized.begin() + offset + pubKeyLen);
