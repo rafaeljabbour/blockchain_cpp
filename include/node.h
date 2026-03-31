@@ -15,6 +15,7 @@
 #include "blockchain.h"
 #include "config.h"
 #include "mempool.h"
+#include "messageInv.h"
 #include "netAddr.h"
 #include "peer.h"
 #include "rpcServer.h"
@@ -39,6 +40,10 @@ inline constexpr int MINER_CV_TIMEOUT_SECS = 60;
 // max messages a peer can send per second before being disconnected
 inline constexpr int32_t MAX_PEER_MESSAGES_PER_SEC = 100;
 
+// inv batching, the interval it flushes and max items per batch message
+inline constexpr int INV_FLUSH_INTERVAL_MS = 100;
+inline constexpr size_t MAX_INV_BATCH_SIZE = 50;
+
 // tracks a peer connection, handshake state, and liveliness and thread
 struct PeerState {
         std::unique_ptr<Peer> peer;
@@ -55,6 +60,10 @@ struct PeerState {
         // rate limiting so no spam
         int32_t msgCount = 0;
         std::chrono::steady_clock::time_point msgWindowStart = std::chrono::steady_clock::now();
+
+        // pending inv items to be batched and sent on flush
+        std::mutex invMutex;
+        std::vector<InvVector> pendingInv;
 
         // liveliness monitoring
         std::mutex pongMutex;
@@ -144,6 +153,13 @@ class Node {
         void RunMinerLoop(std::stop_token stoken);
 
         void BroadcastBlock(const Block& block);
+
+        // queues an inv item for a peer, it is flushed by the inv thread
+        void QueueInv(PeerState& peerState, const InvVector& inv);
+        std::mutex invFlushCVMtx;
+        std::condition_variable invFlushCV;
+        void RunInvFlushLoop(std::stop_token stoken);
+        std::jthread invFlushThread;
 
         void RegisterRPCMethods();
 

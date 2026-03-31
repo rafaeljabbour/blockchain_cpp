@@ -14,6 +14,7 @@
 
 class Blockchain;
 class UTXOSet;
+class Wallet;
 
 class Transaction {
     private:
@@ -42,7 +43,7 @@ class Transaction {
 
         static Transaction NewCoinbaseTX(const std::string& to, int32_t height, int64_t fees = 0,
                                          const std::string& data = "");
-        static Transaction NewUTXOTransaction(const std::string& from, const std::string& to,
+        static Transaction NewUTXOTransaction(Wallet* wallet, Blockchain* bc, const std::string& to,
                                               int64_t amount, UTXOSet* utxoSet);
 
         std::vector<uint8_t> Serialize() const;

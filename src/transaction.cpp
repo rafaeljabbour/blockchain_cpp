@@ -13,7 +13,6 @@
 #include "serialization.h"
 #include "utxoSet.h"
 #include "wallet.h"
-#include "wallets.h"
 
 // RAII type aliases for resources
 using EVP_MD_CTX_ptr = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
@@ -246,17 +245,21 @@ Transaction Transaction::NewCoinbaseTX(const std::string& to, int32_t height, in
     return tx;
 }
 
-Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::string& to,
+Transaction Transaction::NewUTXOTransaction(Wallet* wallet, Blockchain* bc, const std::string& to,
                                             int64_t amount, UTXOSet* utxoSet) {
+    if (!wallet) {
+        throw std::invalid_argument("Wallet pointer cannot be null");
+    }
+    if (!bc) {
+        throw std::invalid_argument("Blockchain pointer cannot be null");
+    }
+
     std::vector<TransactionInput> inputs;
     std::vector<TransactionOutput> outputs;
 
-    // load wallets and get sender's wallet
-    Wallets wallets;
-    Wallet* wallet = wallets.GetWallet(from);
-    if (!wallet) {
-        throw std::runtime_error("Wallet not found for address: " + from);
-    }
+    // derive the sender's address from the wallet's public key
+    std::vector<uint8_t> senderAddr = wallet->GetAddress();
+    std::string from(senderAddr.begin(), senderAddr.end());
 
     auto [acc, validOutputs] =
         utxoSet->FindSpendableOutputs(Wallet::HashPubKey(wallet->GetPublicKey()), amount);
@@ -283,7 +286,7 @@ Transaction Transaction::NewUTXOTransaction(const std::string& from, const std::
 
     Transaction tx({}, inputs, outputs);
     tx.id = tx.Hash();
-    utxoSet->blockchain->SignTransaction(&tx, wallet);
+    bc->SignTransaction(&tx, wallet);
     tx.id = tx.Hash();
 
     return tx;

@@ -113,8 +113,14 @@ void CLI::send(const std::string& from, const std::string& to, int64_t amount) {
     Blockchain bc;
     UTXOSet utxoSet(&bc);
 
+    Wallets wallets;
+    Wallet* wallet = wallets.GetWallet(from);
+    if (!wallet) {
+        throw std::runtime_error("Wallet not found for address: " + from);
+    }
+
     // create the transaction
-    Transaction tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
+    Transaction tx = Transaction::NewUTXOTransaction(wallet, &bc, to, amount, &utxoSet);
 
     // mining reward for the sender
     int32_t nextHeight = bc.GetChainHeight() + 1;

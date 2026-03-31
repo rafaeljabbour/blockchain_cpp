@@ -17,8 +17,6 @@ class Transaction;
 
 // this is a persistent UTXO set backed by its own LevelDB instance under data/utxo/
 class UTXOSet {
-        friend class Transaction;
-
     private:
         Blockchain* blockchain;
         std::unique_ptr<leveldb::DB> db;

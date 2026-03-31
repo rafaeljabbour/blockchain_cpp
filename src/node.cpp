@@ -24,6 +24,7 @@
 #include "transaction.h"
 #include "utxoSet.h"
 #include "wallet.h"
+#include "wallets.h"
 
 using json = nlohmann::json;
 
@@ -106,13 +107,17 @@ void Node::RegisterRPCMethods() {
         if (!Wallet::ValidateAddress(from)) throw std::runtime_error("Invalid 'from' address");
         if (!Wallet::ValidateAddress(to)) throw std::runtime_error("Invalid 'to' address");
 
+        Wallets wallets;
+        Wallet* wallet = wallets.GetWallet(from);
+        if (!wallet) throw std::runtime_error("Wallet not found for address: " + from);
+
         Transaction tx;
         double feeRate = 0.0;
         {
             std::lock_guard<std::mutex> lock(blockchainMutex);
             if (!blockchain) throw std::runtime_error("No blockchain available");
             UTXOSet utxoSet(blockchain.get());
-            tx = Transaction::NewUTXOTransaction(from, to, amount, &utxoSet);
+            tx = Transaction::NewUTXOTransaction(wallet, blockchain.get(), to, amount, &utxoSet);
 
             auto fee = blockchain->VerifyTransaction(&tx);
             if (!fee) throw std::runtime_error("Transaction failed verification after signing");
@@ -589,33 +594,69 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
     }
 }
 
+void Node::QueueInv(PeerState& peerState, const InvVector& inv) {
+    std::lock_guard<std::mutex> lock(peerState.invMutex);
+    peerState.pendingInv.push_back(inv);
+}
+
 void Node::RelayTransaction(const Transaction& tx, const std::string& sourcePeerAddr) {
     InvVector invVec{InvType::Tx, tx.GetID()};
-    MessageInv invMsg({invVec});
-    Message msg(MAGIC_CUSTOM, CMD_INV, invMsg.Serialize());
 
     std::lock_guard<std::mutex> lock(peersMutex);
     for (const auto& peerState : peers) {
-        // skip if disconnected but not removed from the list
-        if (!peerState->peer->IsConnected()) {
-            continue;
-        }
-        // skip if not exchanged verack
-        if (!peerState->handshakeComplete) {
-            continue;
-        }
-        // skip the source peer
-        if (peerState->peer->GetRemoteAddress() == sourcePeerAddr) {
-            continue;
+        if (!peerState->peer->IsConnected()) continue;
+        if (!peerState->handshakeComplete) continue;
+        if (peerState->peer->GetRemoteAddress() == sourcePeerAddr) continue;
+
+        QueueInv(*peerState, invVec);
+    }
+}
+
+void Node::RunInvFlushLoop(std::stop_token stoken) {
+    while (!stoken.stop_requested()) {
+        {
+            std::unique_lock<std::mutex> lock(invFlushCVMtx);
+            invFlushCV.wait_for(lock, std::chrono::milliseconds(INV_FLUSH_INTERVAL_MS),
+                                [&] { return stoken.stop_requested(); });
         }
 
-        try {
-            peerState->peer->SendMessage(msg);
-            std::cout << "[node] Relayed tx " << ByteArrayToHexString(tx.GetID()).substr(0, 16)
-                      << "... inv to " << peerState->peer->GetRemoteAddress() << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "[node] Failed to relay tx inv to " << peerState->peer->GetRemoteAddress()
-                      << ": " << e.what() << std::endl;
+        if (stoken.stop_requested()) break;
+
+        // take a snapshot of peers under peersMutex
+        std::vector<std::shared_ptr<PeerState>> peersSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(peersMutex);
+            peersSnapshot = peers;
+        }
+
+        for (const auto& peerState : peersSnapshot) {
+            if (!peerState->peer->IsConnected() || !peerState->handshakeComplete) continue;
+
+            // drain the pending inv buffer
+            std::vector<InvVector> batch;
+            {
+                std::lock_guard<std::mutex> lock(peerState->invMutex);
+                if (peerState->pendingInv.empty()) continue;
+                batch.swap(peerState->pendingInv);
+            }
+
+            // send in chunks of MAX_INV_BATCH_SIZE
+            for (size_t i = 0; i < batch.size(); i += MAX_INV_BATCH_SIZE) {
+                size_t end = std::min(i + MAX_INV_BATCH_SIZE, batch.size());
+                std::vector<InvVector> chunk(batch.begin() + i, batch.begin() + end);
+
+                MessageInv invMsg(chunk);
+                Message msg(MAGIC_CUSTOM, CMD_INV, invMsg.Serialize());
+
+                try {
+                    peerState->peer->SendMessage(msg);
+                } catch (const std::exception& e) {
+                    std::cerr << "[node] Failed to flush inv batch to "
+                              << peerState->peer->GetRemoteAddress() << ": " << e.what()
+                              << std::endl;
+                    break;
+                }
+            }
         }
     }
 }
@@ -764,6 +805,10 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
 
             blockchain->AddBlock(block);
 
+            // incrementally update the UTXO set per block
+            UTXOSet utxoSet(blockchain.get());
+            utxoSet.Update(block);
+
             // remove mined transactions from mempool
             mempool.RemoveBlockTransactions(block);
 
@@ -774,14 +819,9 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             // check if sync is complete
             if (syncing && peerState.peer->GetRemoteAddress() == syncPeerAddr) {
                 if (blockchainHeight >= peerState.remoteHeight) {
-                    std::cout << "[node] Sync complete! Reindexing UTXO set..." << std::endl;
-
-                    UTXOSet utxoSet(blockchain.get());
-                    utxoSet.Reindex();
-
                     syncing = false;
                     syncPeerAddr.clear();
-                    std::cout << "[node] UTXO reindex complete. Chain is up to date at height "
+                    std::cout << "[node] Sync complete. Chain is up to date at height "
                               << blockchainHeight << std::endl;
                 }
             }
@@ -1188,6 +1228,9 @@ void Node::Start(const std::string& seedAddr, volatile sig_atomic_t* shutdownFla
     // start background cleanup of disconnected peers
     cleanupThread = std::jthread([this](std::stop_token st) { RunCleanupLoop(st); });
 
+    // start inv batching flush thread
+    invFlushThread = std::jthread([this](std::stop_token st) { RunInvFlushLoop(st); });
+
     // start background outbound connection loop
     outboundThread = std::jthread([this](std::stop_token st) { RunOutboundLoop(st); });
 
@@ -1261,9 +1304,12 @@ void Node::Stop() {
     cleanupThread.request_stop();
     minerThread.request_stop();
     outboundThread.request_stop();
+    invFlushThread.request_stop();
+    invFlushCV.notify_all();
     if (cleanupThread.joinable()) cleanupThread.join();
     if (minerThread.joinable()) minerThread.join();
     if (outboundThread.joinable()) outboundThread.join();
+    if (invFlushThread.joinable()) invFlushThread.join();
 
     // copy peers under lock, disconnect and wake all monitor threads
     std::vector<std::shared_ptr<PeerState>> peersSnapshot;
