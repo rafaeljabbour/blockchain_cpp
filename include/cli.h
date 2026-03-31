@@ -10,6 +10,7 @@ class CLI {
 
         void createBlockchain(const std::string& address);
         void createWallet();
+        void encryptWallet(const std::string& passphrase);
         void getBalance(const std::string& address);
         void listAddresses();
         void printChain();

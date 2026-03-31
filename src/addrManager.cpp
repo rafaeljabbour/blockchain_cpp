@@ -2,8 +2,14 @@
 
 #include <algorithm>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <numeric>
 #include <random>
+
+#include "config.h"
+#include "serialization.h"
 
 std::string AddrManager::MakeKey(const NetAddr& addr) {
     return ExtractIPv4(addr) + ":" + std::to_string(addr.port);
@@ -212,4 +218,83 @@ size_t AddrManager::Size() const {
 bool AddrManager::Contains(const std::string& ip, uint16_t port) const {
     std::lock_guard<std::mutex> lock(mtx);
     return addresses.count(ip + ":" + std::to_string(port)) > 0;
+}
+
+void AddrManager::SaveToFile() const {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    std::string path = Config::GetPeersPath();
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    // format: [count(4)] [NetAddr with time]
+    std::vector<uint8_t> data;
+    WriteUint32(data, static_cast<uint32_t>(addresses.size()));
+
+    for (const auto& [key, addr] : addresses) {
+        std::vector<uint8_t> serialized = addr.Serialize(/*includeTime=*/true);
+        data.insert(data.end(), serialized.begin(), serialized.end());
+    }
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        std::cerr << "[addrmanager] Failed to open " << path << " for writing" << std::endl;
+        return;
+    }
+
+    out.write(reinterpret_cast<const char*>(data.data()),
+              static_cast<std::streamsize>(data.size()));
+    std::cout << "[addrmanager] Saved " << addresses.size() << " addresses to " << path
+              << std::endl;
+}
+
+void AddrManager::LoadFromFile() {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    std::string path = Config::GetPeersPath();
+    if (!std::filesystem::exists(path)) {
+        return;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::cerr << "[addrmanager] Failed to open " << path << " for reading" << std::endl;
+        return;
+    }
+
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+
+    if (data.size() < 4) {
+        std::cerr << "[addrmanager] Peers file too small, ignoring" << std::endl;
+        return;
+    }
+
+    uint32_t count = ReadUint32(data, 0);
+    size_t offset = 4;
+
+    // cap to prevent corrupted file from allocating huge amounts
+    if (count > ADDR_MANAGER_MAX_ENTRIES) {
+        count = ADDR_MANAGER_MAX_ENTRIES;
+    }
+
+    size_t loaded = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        try {
+            auto [addr, bytesRead] = NetAddr::Deserialize(data, offset, /*includeTime=*/true);
+            offset += bytesRead;
+
+            std::string key = MakeKey(addr);
+            if (key == selfAddr || addr.port == 0) continue;
+
+            if (addresses.size() < ADDR_MANAGER_MAX_ENTRIES) {
+                addresses[key] = addr;
+                loaded++;
+            }
+        } catch (const std::exception&) {
+            // means it's a corrupted entry so we stop reading
+            break;
+        }
+    }
+
+    std::cout << "[addrmanager] Loaded " << loaded << " addresses from " << path << std::endl;
 }

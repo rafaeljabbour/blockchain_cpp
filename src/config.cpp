@@ -23,4 +23,8 @@ namespace Config {
 
     std::string GetWalletPath() { return (std::filesystem::path(dataDir) / "wallet.dat").string(); }
 
+    std::string GetPeersPath() { return (std::filesystem::path(dataDir) / "peers.dat").string(); }
+
+    std::string GetBanListPath() { return (std::filesystem::path(dataDir) / "banlist.dat").string(); }
+
 }  // namespace Config

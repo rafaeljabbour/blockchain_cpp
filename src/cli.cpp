@@ -19,6 +19,8 @@
 void CLI::printUsage() {
     std::cout << "Usage:\n";
     std::cout << "  createwallet - Generate a new wallet and get its address\n";
+    std::cout << "  encryptwallet -passphrase PASSPHRASE - Encrypt the wallet file with a "
+                 "passphrase\n";
     std::cout << "  createblockchain -address ADDRESS - Create a blockchain and send genesis block "
                  "reward to ADDRESS\n";
     std::cout << "  getbalance -address ADDRESS - Get balance of ADDRESS\n";
@@ -53,6 +55,24 @@ void CLI::createWallet() {
     wallets.SaveToFile();
 
     std::cout << "Your new address: " << address << std::endl;
+}
+
+void CLI::encryptWallet(const std::string& passphrase) {
+    if (!Wallets::WalletFileExists()) {
+        throw std::runtime_error("No wallet file found. Create a wallet first.");
+    }
+
+    if (Wallets::IsFileEncrypted()) {
+        throw std::runtime_error("Wallet is already encrypted");
+    }
+
+    // load the unencrypted wallet, then re-save encrypted
+    Wallets wallets;
+    wallets.EncryptAndSave(passphrase);
+
+    std::cout << "Wallet encrypted successfully." << std::endl;
+    std::cout << "WARNING: Remember your passphrase. If lost, your funds are unrecoverable."
+              << std::endl;
 }
 
 void CLI::getBalance(const std::string& address) {
@@ -194,6 +214,14 @@ void CLI::run(int argc, char* argv[]) {
 
     if (command == "createwallet") {
         createWallet();
+    } else if (command == "encryptwallet") {
+        if (cmdArgc < 3 || std::string(cmdArgv[1]) != "-passphrase") {
+            std::cout << "Error: encryptwallet requires -passphrase flag\n";
+            printUsage();
+            return;
+        }
+        std::string passphrase = cmdArgv[2];
+        encryptWallet(passphrase);
     } else if (command == "createblockchain") {
         if (cmdArgc < 3 || std::string(cmdArgv[1]) != "-address") {
             std::cout << "Error: createblockchain requires -address flag\n";

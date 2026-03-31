@@ -64,6 +64,8 @@ namespace Config {
     std::string GetBlocksPath();
     std::string GetUTXOPath();
     std::string GetWalletPath();
+    std::string GetPeersPath();
+    std::string GetBanListPath();
 
 }  // namespace Config
 

@@ -53,6 +53,10 @@ class AddrManager {
         std::vector<NetAddr> GetAddressesForGossip() const;
         size_t Size() const;
         bool Contains(const std::string& ip, uint16_t port) const;
+
+        // persist address book to disk
+        void SaveToFile() const;
+        void LoadFromFile();
 };
 
 #endif

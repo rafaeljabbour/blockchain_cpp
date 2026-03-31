@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "addrManager.h"
+#include "banManager.h"
 #include "blockchain.h"
 #include "config.h"
 #include "mempool.h"
@@ -61,6 +62,9 @@ struct PeerState {
         int32_t msgCount = 0;
         std::chrono::steady_clock::time_point msgWindowStart = std::chrono::steady_clock::now();
 
+        // misbehavior scoring, if score reaches BAN_SCORE_THRESHOLD the IP is banned
+        int32_t misbehaviorScore = 0;
+
         // pending inv items to be batched and sent on flush
         std::mutex invMutex;
         std::vector<InvVector> pendingInv;
@@ -89,6 +93,7 @@ class Node {
         Mempool mempool;
         RPCServer rpcServer;
         AddrManager addrManager;
+        BanManager banManager;
 
         // persistent blockchain handling
         std::unique_ptr<Blockchain> blockchain;
@@ -128,6 +133,12 @@ class Node {
         void MonitorPeer(std::shared_ptr<PeerState> peerState);
 
         void DisconnectPeer(const std::string& peerAddr);
+
+        // accumulates misbehavior score
+        void Misbehave(PeerState& peerState, int32_t score, const std::string& reason);
+
+        // extracts the IP (without port) from a "ip:port" address string
+        static std::string ExtractIP(const std::string& addr);
 
         void CleanupDisconnectedPeers();
 

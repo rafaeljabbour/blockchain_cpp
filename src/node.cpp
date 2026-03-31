@@ -561,8 +561,7 @@ void Node::HandleTx(PeerState& peerState, const std::vector<uint8_t>& payload) {
             try {
                 auto fee = blockchain->VerifyTransaction(&tx);
                 if (!fee) {
-                    std::cerr << "[node] Rejected transaction " << txid << ": invalid signature"
-                              << std::endl;
+                    Misbehave(peerState, 10, "invalid transaction " + txid);
                     return;
                 }
                 size_t txSize = tx.Serialize().size();
@@ -716,14 +715,13 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
         // verify proof of work
         ProofOfWork pow(&block);
         if (!pow.Validate()) {
-            std::cerr << "[node] Rejected invalid block " << blockHash << std::endl;
+            Misbehave(peerState, 100, "invalid proof of work on block " + blockHash);
             return;
         }
 
         // check block size and structure
         if (!Block::CheckBlockSize(block, payload.size())) {
-            std::cerr << "[node] Rejected block " << blockHash << ": failed size/structure check"
-                      << std::endl;
+            Misbehave(peerState, 100, "block size/structure check failed: " + blockHash);
             return;
         }
 
@@ -753,8 +751,8 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                     std::string outpoint =
                         ByteArrayToHexString(vin.GetTxid()) + ":" + std::to_string(vin.GetVout());
                     if (!spentInBlock.insert(outpoint).second) {
-                        std::cerr << "[node] Rejected block " << blockHash << ": double-spend on "
-                                  << outpoint << std::endl;
+                        Misbehave(peerState, 100,
+                                  "double-spend in block " + blockHash + " on " + outpoint);
                         return;
                     }
                 }
@@ -762,16 +760,15 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
                 try {
                     auto fee = blockchain->VerifyTransaction(&tx, blockCtx);
                     if (!fee) {
-                        std::cerr << "[node] Rejected block " << blockHash
-                                  << ": invalid signature in tx "
-                                  << ByteArrayToHexString(tx.GetID()) << std::endl;
+                        Misbehave(peerState, 100,
+                                  "invalid tx " + ByteArrayToHexString(tx.GetID()) + " in block " +
+                                      blockHash);
                         return;
                     }
                     // this overflow check is a necessary compiler builtin, in order to make sure
                     // transactions don't overflow
                     if (CheckedAdd(totalFees, *fee, totalFees)) {
-                        std::cerr << "[node] Rejected block " << blockHash << ": fee overflow"
-                                  << std::endl;
+                        Misbehave(peerState, 100, "fee overflow in block " + blockHash);
                         return;
                     }
                 } catch (const std::exception& e) {
@@ -785,21 +782,20 @@ void Node::HandleBlock(PeerState& peerState, const std::vector<uint8_t>& payload
             // validate coinbase reward
             int64_t maxCoinbase;
             if (CheckedAdd(Consensus::GetBlockSubsidy(nextHeight), totalFees, maxCoinbase)) {
-                std::cerr << "[node] Rejected block " << blockHash << ": subsidy + fees overflow"
-                          << std::endl;
+                Misbehave(peerState, 100, "subsidy + fees overflow in block " + blockHash);
                 return;
             }
             int64_t coinbaseValue = 0;
             for (const auto& out : block.GetTransactions()[0].GetVout()) {
                 if (CheckedAdd(coinbaseValue, out.GetValue(), coinbaseValue)) {
-                    std::cerr << "[node] Rejected block " << blockHash
-                              << ": coinbase value overflow" << std::endl;
+                    Misbehave(peerState, 100, "coinbase value overflow in block " + blockHash);
                     return;
                 }
             }
             if (coinbaseValue > maxCoinbase) {
-                std::cerr << "[node] Rejected block " << blockHash << ": coinbase value "
-                          << coinbaseValue << " exceeds allowed " << maxCoinbase << std::endl;
+                Misbehave(peerState, 100,
+                          "coinbase value " + std::to_string(coinbaseValue) + " exceeds allowed " +
+                              std::to_string(maxCoinbase) + " in block " + blockHash);
                 return;
             }
 
@@ -845,8 +841,7 @@ void Node::DispatchMessage(PeerState& peerState, const Message& msg) {
 
     // all other messages require a completed handshake
     if (!peerState.handshakeComplete) {
-        std::cerr << "[node] Dropping " << cmd << " from " << peerState.peer->GetRemoteAddress()
-                  << ": handshake not complete" << std::endl;
+        Misbehave(peerState, 10, "message before handshake: " + cmd);
         return;
     }
 
@@ -953,6 +948,25 @@ void Node::DisconnectPeer(const std::string& peerAddr) {
     }
 }
 
+std::string Node::ExtractIP(const std::string& addr) {
+    size_t colon = addr.rfind(':');
+    return (colon != std::string::npos) ? addr.substr(0, colon) : addr;
+}
+
+void Node::Misbehave(PeerState& peerState, int32_t score, const std::string& reason) {
+    peerState.misbehaviorScore += score;
+    std::string peerAddr = peerState.peer->GetRemoteAddress();
+
+    std::cerr << "[node] Misbehavior from " << peerAddr << " (+" << score
+              << ", total=" << peerState.misbehaviorScore << "): " << reason << std::endl;
+
+    if (peerState.misbehaviorScore >= BAN_SCORE_THRESHOLD) {
+        std::string ip = ExtractIP(peerAddr);
+        banManager.Ban(ip, reason);
+        DisconnectPeer(peerAddr);
+    }
+}
+
 void Node::CleanupDisconnectedPeers() {
     // collect disconnected peers under lock, then join their threads outside the lock
     std::vector<std::shared_ptr<PeerState>> toCleanup;
@@ -1014,9 +1028,7 @@ void Node::StartPeerLoop(std::shared_ptr<PeerState> peerState) {
                     peerState->msgWindowStart = now;
                 }
                 if (++peerState->msgCount > MAX_PEER_MESSAGES_PER_SEC) {
-                    std::cerr << "[node] Rate limit exceeded by "
-                              << peerState->peer->GetRemoteAddress() << ", disconnecting"
-                              << std::endl;
+                    Misbehave(*peerState, BAN_SCORE_THRESHOLD, "rate limit exceeded");
                     break;
                 }
 
@@ -1218,6 +1230,8 @@ void Node::Start(const std::string& seedAddr, volatile sig_atomic_t* shutdownFla
     running = true;
 
     addrManager.SetSelfAddr(ip, port);
+    addrManager.LoadFromFile();
+    banManager.LoadFromFile();
 
     std::cout << "[node] Node started on " << ip << ":" << port << std::endl;
     std::cout << "[node] Blockchain height: " << blockchainHeight << std::endl;
@@ -1267,6 +1281,15 @@ void Node::Start(const std::string& seedAddr, volatile sig_atomic_t* shutdownFla
                 continue;
             }
 
+            // reject banned IPs
+            std::string peerIP = ExtractIP(peer->GetRemoteAddress());
+            if (banManager.IsBanned(peerIP)) {
+                std::cout << "[node] Rejected banned peer " << peer->GetRemoteAddress()
+                          << std::endl;
+                peer->Disconnect();
+                continue;
+            }
+
             {
                 std::lock_guard<std::mutex> lock(peersMutex);
                 if (peers.size() >= MAX_PEERS) {
@@ -1300,6 +1323,10 @@ void Node::Stop() {
     running = false;
     server.Stop();
     rpcServer.Stop();
+
+    // persist address book and ban list before shutting down
+    addrManager.SaveToFile();
+    banManager.SaveToFile();
 
     cleanupThread.request_stop();
     minerThread.request_stop();
@@ -1478,6 +1505,9 @@ void Node::RunOutboundLoop(std::stop_token stoken) {
                 std::to_string(candidate.ip[12]) + "." + std::to_string(candidate.ip[13]) + "." +
                 std::to_string(candidate.ip[14]) + "." + std::to_string(candidate.ip[15]);
             uint16_t candidatePort = candidate.port;
+
+            // skip banned IPs
+            if (banManager.IsBanned(candidateIP)) continue;
 
             std::cout << "[node] Attempting outbound connection to " << candidateIP << ":"
                       << candidatePort << std::endl;
